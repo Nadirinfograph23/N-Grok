@@ -1,0 +1,9 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "projectSettings": {
+    "framework": "vite"
+  },
+  "buildCommand": "cd n-grok-frontend && npm install && npm run build",
+  "outputDirectory": "n-grok-frontend/dist",
+  "installCommand": "cd n-grok-frontend && npm install"
+}
