@@ -1,4 +1,4 @@
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+const API_URL = import.meta.env.VITE_API_URL || "";
 
 export interface ImageGenerateRequest {
   prompt: string;
@@ -87,11 +87,22 @@ export async function getVideoStatus(requestId: string): Promise<VideoStatusResp
 }
 
 export async function uploadImage(file: File): Promise<{ data_uri: string; filename: string }> {
-  const formData = new FormData();
-  formData.append("file", file);
+  const arrayBuffer = await file.arrayBuffer();
+  const bytes = new Uint8Array(arrayBuffer);
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  const base64 = btoa(binary);
+
   const res = await fetch(`${API_URL}/api/upload-image`, {
     method: "POST",
-    body: formData,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      data: base64,
+      content_type: file.type || "image/png",
+      filename: file.name,
+    }),
   });
   if (!res.ok) {
     const err = await res.text();

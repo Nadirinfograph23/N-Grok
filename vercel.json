@@ -1,10 +1,11 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "vite",
-  "installCommand": "cd n-grok-frontend && npm install",
+  "installCommand": "npm install && cd n-grok-frontend && npm install",
   "buildCommand": "cd n-grok-frontend && npm run build",
   "outputDirectory": "n-grok-frontend/dist",
   "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api/$1" },
     { "source": "/(.*)", "destination": "/" }
   ]
 }
