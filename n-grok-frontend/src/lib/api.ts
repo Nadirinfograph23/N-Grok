@@ -64,7 +64,7 @@ export async function editImage(req: ImageEditRequest): Promise<ImageResponse> {
   return res.json();
 }
 
-export async function generateVideo(req: VideoGenerateRequest): Promise<{ request_id: string }> {
+export async function generateVideo(req: VideoGenerateRequest): Promise<VideoStatusResponse & { post_id?: string }> {
   const res = await fetch(`${API_URL}/api/videos/generate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
