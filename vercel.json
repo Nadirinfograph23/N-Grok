@@ -4,6 +4,11 @@
   "installCommand": "npm install && cd n-grok-frontend && npm install",
   "buildCommand": "cd n-grok-frontend && npm run build",
   "outputDirectory": "n-grok-frontend/dist",
+  "functions": {
+    "api/**/*.ts": {
+      "maxDuration": 60
+    }
+  },
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/$1" },
     { "source": "/(.*)", "destination": "/" }

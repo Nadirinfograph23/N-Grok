@@ -76,18 +76,22 @@ export default function VideoGenerator() {
     clearPollTimer();
 
     try {
-      const durationNum = parseInt(duration);
       const resp = await generateVideo({
         prompt: prompt.trim(),
-        duration: durationNum,
-        aspect_ratio: aspectRatio,
-        resolution,
         image_url: imageRef || undefined,
       });
 
-      setRequestId(resp.request_id);
-      setStatus("polling");
-      pollTimerRef.current = setTimeout(() => pollStatus(resp.request_id, 0), 5000);
+      if (resp.status === "done" && resp.video?.url) {
+        setVideoUrl(resp.video.url);
+        setStatus("done");
+      } else if (resp.post_id) {
+        setRequestId(resp.post_id);
+        setStatus("polling");
+        pollTimerRef.current = setTimeout(() => pollStatus(resp.post_id!, 0), 5000);
+      } else {
+        setErrorMsg("Video generation did not return a result");
+        setStatus("error");
+      }
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : "Generation failed");
       setStatus("error");
