@@ -3,10 +3,11 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 const XAI_API_BASE = "https://api.x.ai/v1";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
   if (req.method === "OPTIONS") {
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
     return res.status(200).end();
   }
 
@@ -47,7 +48,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(resp.status).json(data);
     }
 
-    res.setHeader("Access-Control-Allow-Origin", "*");
     return res.status(200).json(data);
   } catch (err) {
     return res.status(500).json({ error: "Failed to call xAI API", details: String(err) });

@@ -3,10 +3,11 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 const XAI_API_BASE = "https://api.x.ai/v1";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
   if (req.method === "OPTIONS") {
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
     return res.status(200).end();
   }
 
@@ -19,7 +20,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(500).json({ error: "XAI_API_KEY not configured" });
   }
 
-  const { requestId } = req.query;
+  const rawId = req.query.requestId;
+  const requestId = Array.isArray(rawId) ? rawId[0] : rawId;
+
+  if (!requestId) {
+    return res.status(400).json({ error: "Missing requestId" });
+  }
 
   try {
     const resp = await fetch(`${XAI_API_BASE}/videos/${requestId}`, {
@@ -34,7 +40,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(resp.status).json(data);
     }
 
-    res.setHeader("Access-Control-Allow-Origin", "*");
     return res.status(200).json(data);
   } catch (err) {
     return res.status(500).json({ error: "Failed to call xAI API", details: String(err) });
