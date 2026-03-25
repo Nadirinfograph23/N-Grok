@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-app = FastAPI(title="N-Grok API", description="Proxy to xAI Grok Imagine API for image and video generation")
+app = FastAPI(title="N-Grok API", description="Proxy to GeminiGen AI API for image and video generation")
 
 # Disable CORS. Do not remove this for full-stack development.
 app.add_middleware(
@@ -21,20 +21,20 @@ app.add_middleware(
     allow_headers=["*"],  # Allows all headers
 )
 
-XAI_API_BASE = "https://api.x.ai/v1"
+GEMINIGEN_API_BASE = "https://api.geminigen.ai/uapi/v1"
 
 
 def get_api_key() -> str:
-    key = os.getenv("XAI_API_KEY", "")
+    key = os.getenv("GEMINIGEN_API_KEY", "")
     if not key:
-        raise HTTPException(status_code=500, detail="XAI_API_KEY not configured on server")
+        raise HTTPException(status_code=500, detail="GEMINIGEN_API_KEY not configured on server")
     return key
 
 
 def get_headers() -> dict:
     return {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {get_api_key()}",
+        "x-api-key": get_api_key(),
+        "Accept": "application/json",
     }
 
 
@@ -49,109 +49,116 @@ async def healthz():
 
 class ImageGenerateRequest(BaseModel):
     prompt: str
-    n: int = 1
-    aspect_ratio: str = "auto"
-    response_format: str = "url"
+    model: str = "imagen-flash"
+    aspect_ratio: str = "16:9"
+    style: Optional[str] = None
 
 
 @app.post("/api/images/generate")
 async def generate_image(req: ImageGenerateRequest):
-    payload: dict = {
-        "model": "grok-imagine-image",
+    form_data = {
         "prompt": req.prompt,
-        "n": req.n,
-        "response_format": req.response_format,
+        "model": req.model,
+        "aspect_ratio": req.aspect_ratio,
     }
-    if req.aspect_ratio != "auto":
-        payload["aspect_ratio"] = req.aspect_ratio
+    if req.style and req.style not in ("None", "none"):
+        form_data["style"] = req.style
 
     async with httpx.AsyncClient(timeout=120.0) as client:
         resp = await client.post(
-            f"{XAI_API_BASE}/images/generations",
+            f"{GEMINIGEN_API_BASE}/generate_image",
             headers=get_headers(),
-            json=payload,
+            data=form_data,
         )
     if resp.status_code != 200:
         raise HTTPException(status_code=resp.status_code, detail=resp.text)
-    return resp.json()
+
+    result = resp.json()
+    # Transform GeminiGen response to match frontend expected format
+    if "base64_images" in result:
+        return {"data": [{"url": f"data:image/png;base64,{result['base64_images']}"}]}
+    return result
 
 
 # ---------- Image Editing ----------
 
 class ImageEditRequest(BaseModel):
     prompt: str
-    image_url: str
-    n: int = 1
-    response_format: str = "url"
+    image_base64: str
 
 
 @app.post("/api/images/edit")
 async def edit_image(req: ImageEditRequest):
-    payload = {
-        "model": "grok-imagine-image",
-        "prompt": req.prompt,
-        "image": {
-            "url": req.image_url,
-            "type": "image_url",
-        },
-        "n": req.n,
-        "response_format": req.response_format,
-    }
+    # Use imagen-flash model which supports image reference
+    # Strip data URI prefix if present
+    base64_data = req.image_base64
+    if ";base64," in base64_data:
+        base64_data = base64_data.split(";base64,", 1)[1]
+
+    image_bytes = base64.b64decode(base64_data)
 
     async with httpx.AsyncClient(timeout=120.0) as client:
         resp = await client.post(
-            f"{XAI_API_BASE}/images/edits",
+            f"{GEMINIGEN_API_BASE}/generate_image",
             headers=get_headers(),
-            json=payload,
+            data={"prompt": req.prompt, "model": "imagen-flash", "aspect_ratio": "16:9"},
+            files={"files": ("reference.png", image_bytes, "image/png")},
         )
     if resp.status_code != 200:
         raise HTTPException(status_code=resp.status_code, detail=resp.text)
-    return resp.json()
+
+    result = resp.json()
+    if "base64_images" in result:
+        return {"data": [{"url": f"data:image/png;base64,{result['base64_images']}"}]}
+    return result
 
 
 # ---------- Video Generation ----------
 
 class VideoGenerateRequest(BaseModel):
     prompt: str
-    duration: int = 6
+    model: str = "veo-2"
     aspect_ratio: str = "16:9"
-    resolution: str = "480p"
-    image_url: Optional[str] = None
+    resolution: str = "720p"
 
 
 @app.post("/api/videos/generate")
 async def generate_video(req: VideoGenerateRequest):
-    payload: dict = {
-        "model": "grok-imagine-video",
+    form_data = {
         "prompt": req.prompt,
-        "duration": req.duration,
+        "model": req.model,
         "aspect_ratio": req.aspect_ratio,
         "resolution": req.resolution,
     }
-    if req.image_url:
-        payload["image_url"] = req.image_url
 
     async with httpx.AsyncClient(timeout=60.0) as client:
         resp = await client.post(
-            f"{XAI_API_BASE}/videos/generations",
+            f"{GEMINIGEN_API_BASE}/video-gen/veo",
             headers=get_headers(),
-            json=payload,
+            data=form_data,
         )
     if resp.status_code != 200:
         raise HTTPException(status_code=resp.status_code, detail=resp.text)
-    return resp.json()
+
+    data = resp.json()
+    # GeminiGen returns { id, uuid, status, ... }
+    if "uuid" in data:
+        return {
+            "status": "submitted",
+            "post_id": data["uuid"],
+            "message": "Video generation request submitted successfully. Results will be sent to your webhook.",
+        }
+    return data
 
 
 @app.get("/api/videos/status/{request_id}")
 async def video_status(request_id: str):
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.get(
-            f"{XAI_API_BASE}/videos/{request_id}",
-            headers={"Authorization": f"Bearer {get_api_key()}"},
-        )
-    if resp.status_code != 200:
-        raise HTTPException(status_code=resp.status_code, detail=resp.text)
-    return resp.json()
+    # GeminiGen uses webhooks for video results delivery
+    return {
+        "status": "processing",
+        "post_id": request_id,
+        "message": "Video is being processed. Results will be delivered to your configured webhook.",
+    }
 
 
 # ---------- Upload Image (base64 conversion) ----------
