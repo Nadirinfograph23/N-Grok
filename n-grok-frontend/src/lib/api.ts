@@ -25,6 +25,28 @@ export interface VideoSubmitResponse {
   message?: string;
 }
 
+export interface ChatRequest {
+  message: string;
+  model?: string;
+  conversationId?: string;
+  parentResponseId?: string;
+  customInstructions?: string;
+  disableSearch?: boolean;
+  enableImageGeneration?: boolean;
+  imageGenerationCount?: number;
+  isReasoning?: boolean;
+  webpageUrls?: string[];
+}
+
+export interface ChatResponse {
+  message: string;
+  images?: string[];
+  conversationId?: string;
+  responseId?: string;
+  title?: string;
+  error?: string;
+}
+
 export interface ImageResponse {
   data: Array<{
     url?: string;
@@ -67,6 +89,19 @@ export async function generateVideo(req: VideoGenerateRequest): Promise<VideoSub
   if (!res.ok) {
     const err = await res.text();
     throw new Error(`Video generation failed: ${err}`);
+  }
+  return res.json();
+}
+
+export async function sendChat(req: ChatRequest): Promise<ChatResponse> {
+  const res = await fetch(`${API_URL}/api/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Chat failed: ${err}`);
   }
   return res.json();
 }

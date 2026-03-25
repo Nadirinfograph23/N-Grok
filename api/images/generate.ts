@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { generateImageWithGrok } from "../lib/grok-client";
+import { askGrok } from "../lib/grok-client";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -13,30 +13,35 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  const { prompt, model = "grok-3-auto" } = req.body;
+  const { prompt, model = "grok-3", imageGenerationCount = 2 } = req.body;
   if (!prompt) {
     return res.status(400).json({ error: "Missing prompt" });
   }
 
   try {
-    const result = await generateImageWithGrok(
-      `Generate an image: ${prompt}`,
-      model
-    );
+    const result = await askGrok({
+      message: `Generate an image: ${prompt}`,
+      modelName: model,
+      enableImageGeneration: true,
+      imageGenerationCount,
+      forceConcise: true,
+      disableTextFollowUps: true,
+    });
 
     if (result.error) {
       return res.status(500).json({ error: result.error });
     }
 
-    if (result.images && result.images.length > 0) {
+    const imageUrls = result.modelResponse.generatedImageUrls;
+    if (imageUrls.length > 0) {
       return res.status(200).json({
-        data: result.images.map((url) => ({ url })),
+        data: imageUrls.map((url) => ({ url })),
       });
     }
 
     return res.status(200).json({
       data: [],
-      message: result.response || "No images were generated. Try a different prompt.",
+      message: result.modelResponse.message || "No images were generated. Try a different prompt.",
     });
   } catch (err) {
     return res
