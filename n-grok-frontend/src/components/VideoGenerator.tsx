@@ -78,6 +78,9 @@ export default function VideoGenerator() {
     try {
       const resp = await generateVideo({
         prompt: prompt.trim(),
+        duration: parseInt(duration, 10),
+        aspect_ratio: aspectRatio,
+        resolution,
         image_url: imageRef || undefined,
       });
 
