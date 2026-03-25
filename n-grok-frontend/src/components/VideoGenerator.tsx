@@ -1,99 +1,60 @@
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef } from "react";
 import { Loader2 } from "lucide-react";
-import { generateVideo, getVideoStatus, uploadImage } from "../lib/api";
+import { generateVideo, uploadImage } from "../lib/api";
 
-type GenerationStatus = "idle" | "submitting" | "polling" | "done" | "error";
+type GenerationStatus = "idle" | "submitting" | "submitted" | "error";
 
-const ASPECT_RATIOS = ["16:9", "9:16", "1:1", "4:3", "3:4"];
-const DURATIONS = ["5s", "6s", "8s", "10s", "15s"];
-const RESOLUTIONS = ["480p", "720p"];
+const VIDEO_MODELS: Record<string, string> = {
+  "Veo 3": "veo-3",
+  "Veo 3 Fast": "veo-3-fast",
+  "Veo 2": "veo-2",
+};
+
+const ASPECT_RATIOS = ["16:9", "9:16"];
+const RESOLUTIONS = ["720p", "1080p"];
 
 export default function VideoGenerator() {
   const [prompt, setPrompt] = useState("");
-  const [duration, setDuration] = useState("5s");
+  const [model, setModel] = useState("veo-2");
   const [aspectRatio, setAspectRatio] = useState("16:9");
-  const [resolution, setResolution] = useState("480p");
-  const [imageRef, setImageRef] = useState<string | null>(null);
+  const [resolution, setResolution] = useState("720p");
+  const [, setImageRef] = useState<string | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [showRatioMenu, setShowRatioMenu] = useState(false);
-  const [showDurationMenu, setShowDurationMenu] = useState(false);
+  const [showModelMenu, setShowModelMenu] = useState(false);
   const [showResMenu, setShowResMenu] = useState(false);
 
   const [status, setStatus] = useState<GenerationStatus>("idle");
-  const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
   const [requestId, setRequestId] = useState<string | null>(null);
-  const [pollCount, setPollCount] = useState(0);
+  const [submitMessage, setSubmitMessage] = useState("");
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoInputRef = useRef<HTMLInputElement>(null);
-  const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const clearPollTimer = useCallback(() => {
-    if (pollTimerRef.current) {
-      clearTimeout(pollTimerRef.current);
-      pollTimerRef.current = null;
-    }
-  }, []);
-
-  useEffect(() => {
-    return () => clearPollTimer();
-  }, [clearPollTimer]);
-
-  const pollStatus = useCallback(
-    async (rid: string, count: number) => {
-      try {
-        const data = await getVideoStatus(rid);
-        setPollCount(count + 1);
-
-        if (data.status === "done" && data.video?.url) {
-          setVideoUrl(data.video.url);
-          setStatus("done");
-          clearPollTimer();
-        } else if (data.status === "failed" || data.status === "expired") {
-          setErrorMsg(`Video generation ${data.status}`);
-          setStatus("error");
-          clearPollTimer();
-        } else {
-          pollTimerRef.current = setTimeout(() => pollStatus(rid, count + 1), 5000);
-        }
-      } catch (err) {
-        setErrorMsg(err instanceof Error ? err.message : "Polling failed");
-        setStatus("error");
-        clearPollTimer();
-      }
-    },
-    [clearPollTimer]
-  );
 
   const handleGenerate = async () => {
     if (!prompt.trim()) return;
 
     setStatus("submitting");
-    setVideoUrl(null);
     setErrorMsg("");
-    setPollCount(0);
-    clearPollTimer();
+    setRequestId(null);
+    setSubmitMessage("");
 
     try {
       const resp = await generateVideo({
         prompt: prompt.trim(),
-        duration: parseInt(duration, 10),
+        model,
         aspect_ratio: aspectRatio,
         resolution,
-        image_url: imageRef || undefined,
       });
 
-      if (resp.status === "done" && resp.video?.url) {
-        setVideoUrl(resp.video.url);
-        setStatus("done");
-      } else if (resp.post_id) {
+      if (resp.post_id) {
         setRequestId(resp.post_id);
-        setStatus("polling");
-        pollTimerRef.current = setTimeout(() => pollStatus(resp.post_id!, 0), 5000);
+        setSubmitMessage(resp.message || "Video generation request submitted successfully.");
+        setStatus("submitted");
       } else {
-        setErrorMsg("Video generation did not return a result");
-        setStatus("error");
+        setSubmitMessage("Video generation request submitted successfully.");
+        setStatus("submitted");
       }
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : "Generation failed");
@@ -122,7 +83,7 @@ export default function VideoGenerator() {
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
-  const isGenerating = status === "submitting" || status === "polling";
+  const isGenerating = status === "submitting";
 
   return (
     <div style={{ height: "calc(100vh - 56px)" }} className="relative">
@@ -153,38 +114,34 @@ export default function VideoGenerator() {
         </div>
 
         {/* Result Section */}
-        {(status === "submitting" || status === "polling") && (
+        {status === "submitting" && (
           <div className="w-full max-w-2xl mb-8 animate-fade-in-up">
             <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-8 flex flex-col items-center">
               <Loader2 className="w-10 h-10 text-primary animate-spin mb-4" />
-              <p className="text-white text-sm mb-1">
-                {status === "submitting" ? "Submitting to xAI..." : "Generating your video..."}
-              </p>
-              {status === "polling" && (
-                <>
-                  <p className="text-muted text-xs">Poll #{pollCount} — This may take a few minutes</p>
-                  {requestId && <p className="text-muted text-xs mt-1 font-mono">ID: {requestId}</p>}
-                </>
-              )}
+              <p className="text-white text-sm mb-1">Submitting video request...</p>
             </div>
           </div>
         )}
 
-        {status === "done" && videoUrl && (
+        {status === "submitted" && (
           <div className="w-full max-w-2xl mb-8 animate-fade-in-up">
-            <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-4 overflow-hidden">
-              <video src={videoUrl} controls autoPlay className="w-full rounded-xl" />
-              <div className="flex items-center justify-between mt-3 px-2">
-                <span className="text-primary text-sm font-bold">Video generated!</span>
-                <a
-                  href={videoUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-xs font-bold text-black bg-primary px-4 py-2 rounded-xl hover:shadow-glow transition-all"
-                >
-                  Download
-                </a>
+            <div className="bg-primary/10 backdrop-blur-xl border border-primary/20 rounded-2xl p-8 flex flex-col items-center">
+              <div className="w-12 h-12 bg-primary/20 rounded-full flex items-center justify-center mb-4">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-primary">
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
               </div>
+              <p className="text-white text-sm font-bold mb-2">Request Submitted!</p>
+              <p className="text-muted text-xs text-center mb-3">{submitMessage}</p>
+              {requestId && (
+                <p className="text-muted text-xs font-mono bg-white/5 px-3 py-1.5 rounded-lg">ID: {requestId}</p>
+              )}
+              <button
+                onClick={() => { setStatus("idle"); setRequestId(null); setSubmitMessage(""); }}
+                className="mt-4 text-xs font-bold text-black bg-primary px-4 py-2 rounded-xl hover:shadow-glow transition-all"
+              >
+                Generate Another
+              </button>
             </div>
           </div>
         )}
@@ -258,18 +215,38 @@ export default function VideoGenerator() {
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4 px-2 pt-4 border-t border-white/5 relative">
               <div className="flex items-center gap-1.5 md:gap-2.5 relative flex-wrap pb-1 md:pb-0">
                 {/* Model Selector */}
-                <button type="button" className="flex items-center gap-1.5 md:gap-2.5 px-3 md:px-4 py-2 md:py-2.5 bg-white/5 hover:bg-white/10 rounded-xl md:rounded-2xl transition-all border border-white/5 group whitespace-nowrap">
-                  <div className="w-5 h-5 bg-primary rounded-md flex items-center justify-center shadow-lg shadow-primary/20">
-                    <span className="text-[10px] font-black text-black">X</span>
-                  </div>
-                  <span className="text-xs font-bold text-white group-hover:text-primary transition-colors">Grok Imagine</span>
-                </button>
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => { setShowModelMenu(!showModelMenu); setShowRatioMenu(false); setShowResMenu(false); }}
+                    className="flex items-center gap-1.5 md:gap-2.5 px-3 md:px-4 py-2 md:py-2.5 bg-white/5 hover:bg-white/10 rounded-xl md:rounded-2xl transition-all border border-white/5 group whitespace-nowrap"
+                  >
+                    <div className="w-5 h-5 bg-primary rounded-md flex items-center justify-center shadow-lg shadow-primary/20">
+                      <span className="text-[10px] font-black text-black">G</span>
+                    </div>
+                    <span className="text-xs font-bold text-white group-hover:text-primary transition-colors">
+                      {Object.entries(VIDEO_MODELS).find(([, v]) => v === model)?.[0] || model}
+                    </span>
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4" className="opacity-20 group-hover:opacity-100 transition-opacity">
+                      <path d="M6 9l6 6 6-6" />
+                    </svg>
+                  </button>
+                  {showModelMenu && (
+                    <div className="absolute bottom-full left-0 mb-2 bg-[#1a1a1a] border border-white/10 rounded-xl py-1 shadow-xl z-50">
+                      {Object.entries(VIDEO_MODELS).map(([label, value]) => (
+                        <button key={value} onClick={() => { setModel(value); setShowModelMenu(false); }}
+                          className={`block w-full text-left px-4 py-2 text-xs font-bold transition-colors ${model === value ? "text-primary bg-white/5" : "text-white hover:bg-white/5"}`}
+                        >{label}</button>
+                      ))}
+                    </div>
+                  )}
+                </div>
 
                 {/* Aspect Ratio */}
                 <div className="relative">
                   <button
                     type="button"
-                    onClick={() => { setShowRatioMenu(!showRatioMenu); setShowDurationMenu(false); setShowResMenu(false); }}
+                    onClick={() => { setShowRatioMenu(!showRatioMenu); setShowModelMenu(false); setShowResMenu(false); }}
                     className="flex items-center gap-1.5 md:gap-2.5 px-3 md:px-4 py-2 md:py-2.5 bg-white/5 hover:bg-white/10 rounded-xl md:rounded-2xl transition-all border border-white/5 group whitespace-nowrap"
                   >
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="opacity-60 text-secondary">
@@ -291,38 +268,11 @@ export default function VideoGenerator() {
                   )}
                 </div>
 
-                {/* Duration */}
-                <div className="relative">
-                  <button
-                    type="button"
-                    onClick={() => { setShowDurationMenu(!showDurationMenu); setShowRatioMenu(false); setShowResMenu(false); }}
-                    className="flex items-center gap-1.5 md:gap-2.5 px-3 md:px-4 py-2 md:py-2.5 bg-white/5 hover:bg-white/10 rounded-xl md:rounded-2xl transition-all border border-white/5 group whitespace-nowrap"
-                  >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="opacity-60 text-secondary">
-                      <circle cx="12" cy="12" r="10" />
-                      <polyline points="12 6 12 12 16 14" />
-                    </svg>
-                    <span className="text-xs font-bold text-white group-hover:text-primary transition-colors">{duration}</span>
-                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4" className="opacity-20 group-hover:opacity-100 transition-opacity">
-                      <path d="M6 9l6 6 6-6" />
-                    </svg>
-                  </button>
-                  {showDurationMenu && (
-                    <div className="absolute bottom-full left-0 mb-2 bg-[#1a1a1a] border border-white/10 rounded-xl py-1 shadow-xl z-50">
-                      {DURATIONS.map((d) => (
-                        <button key={d} onClick={() => { setDuration(d); setShowDurationMenu(false); }}
-                          className={`block w-full text-left px-4 py-2 text-xs font-bold transition-colors ${duration === d ? "text-primary bg-white/5" : "text-white hover:bg-white/5"}`}
-                        >{d}</button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
                 {/* Resolution */}
                 <div className="relative">
                   <button
                     type="button"
-                    onClick={() => { setShowResMenu(!showResMenu); setShowRatioMenu(false); setShowDurationMenu(false); }}
+                    onClick={() => { setShowResMenu(!showResMenu); setShowRatioMenu(false); setShowModelMenu(false); }}
                     className="flex items-center gap-1.5 md:gap-2.5 px-3 md:px-4 py-2 md:py-2.5 bg-white/5 hover:bg-white/10 rounded-xl md:rounded-2xl transition-all border border-white/5 group whitespace-nowrap"
                   >
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="opacity-60 text-secondary">
@@ -357,7 +307,7 @@ export default function VideoGenerator() {
                 {isGenerating ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin" />
-                    {status === "submitting" ? "Submitting..." : "Generating..."}
+                    Submitting...
                   </>
                 ) : (
                   "Generate +"

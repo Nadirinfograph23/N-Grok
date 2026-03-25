@@ -3,21 +3,74 @@ import { Loader2 } from "lucide-react";
 import { generateImage, editImage, uploadImage } from "../lib/api";
 
 type Mode = "generate" | "edit";
-const ASPECT_RATIOS = ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3"];
+
+const IMAGE_MODELS: Record<string, string> = {
+  "Imagen 4 Ultra": "imagen-4-ultra",
+  "Imagen 4 Fast": "imagen-4-fast",
+  "Imagen 4": "imagen-4",
+  "Imagen Flash": "imagen-flash",
+};
+
+const IMAGE_STYLES = [
+  "None",
+  "3D Render",
+  "Acrylic",
+  "Anime General",
+  "Creative",
+  "Dynamic",
+  "Fashion",
+  "Game Concept",
+  "Graphic Design 3D",
+  "Illustration",
+  "Photorealistic",
+  "Portrait",
+  "Portrait Cinematic",
+  "Portrait Fashion",
+  "Ray Traced",
+  "Stock Photo",
+  "Watercolor",
+];
+
+const MODEL_ASPECT_RATIOS: Record<string, string[]> = {
+  "imagen-4-ultra": ["1:1", "3:4", "4:3", "16:9", "9:16"],
+  "imagen-4-fast": ["1:1", "3:4", "4:3", "16:9", "9:16"],
+  "imagen-4": ["1:1", "3:4", "4:3", "16:9", "9:16"],
+  "imagen-flash": ["16:9", "9:16"],
+};
+
+const MODELS_WITH_IMAGE_REF = ["imagen-flash"];
 
 export default function ImageGenerator() {
   const [mode, setMode] = useState<Mode>("generate");
   const [prompt, setPrompt] = useState("");
-  const [aspectRatio, setAspectRatio] = useState("1:1");
+  const [model, setModel] = useState("imagen-flash");
+  const [style, setStyle] = useState("None");
+  const [aspectRatio, setAspectRatio] = useState("16:9");
   const [imageRef, setImageRef] = useState<string | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [showRatioMenu, setShowRatioMenu] = useState(false);
+  const [showModelMenu, setShowModelMenu] = useState(false);
+  const [showStyleMenu, setShowStyleMenu] = useState(false);
 
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState<string[]>([]);
   const [errorMsg, setErrorMsg] = useState("");
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const currentAspectRatios = MODEL_ASPECT_RATIOS[model] || ["1:1", "16:9", "9:16"];
+
+  const handleModelChange = (newModel: string) => {
+    setModel(newModel);
+    const ratios = MODEL_ASPECT_RATIOS[newModel] || ["1:1"];
+    if (!ratios.includes(aspectRatio)) {
+      setAspectRatio(ratios[0]);
+    }
+    if (!MODELS_WITH_IMAGE_REF.includes(newModel) && mode === "edit") {
+      setMode("generate");
+    }
+    setShowModelMenu(false);
+  };
 
   const handleGenerate = async () => {
     if (!prompt.trim()) return;
@@ -34,8 +87,9 @@ export default function ImageGenerator() {
       if (mode === "generate") {
         const resp = await generateImage({
           prompt: prompt.trim(),
-          n: 1,
+          model,
           aspect_ratio: aspectRatio,
+          style: style !== "None" ? style : undefined,
         });
         const urls = resp.data
           .map((d) => d.url)
@@ -44,8 +98,7 @@ export default function ImageGenerator() {
       } else {
         const resp = await editImage({
           prompt: prompt.trim(),
-          image_url: imageRef!,
-          n: 1,
+          image_base64: imageRef!,
         });
         const urls = resp.data
           .map((d) => d.url)
@@ -201,44 +254,92 @@ export default function ImageGenerator() {
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4 px-2 pt-4 border-t border-white/5 relative">
               <div className="flex items-center gap-1.5 md:gap-2.5 relative flex-wrap pb-1 md:pb-0">
                 {/* Model Selector */}
-                <button type="button" className="flex items-center gap-1.5 md:gap-2.5 px-3 md:px-4 py-2 md:py-2.5 bg-white/5 hover:bg-white/10 rounded-xl md:rounded-2xl transition-all border border-white/5 group whitespace-nowrap">
-                  <div className="w-5 h-5 bg-primary rounded-md flex items-center justify-center shadow-lg shadow-primary/20">
-                    <span className="text-[10px] font-black text-black">X</span>
-                  </div>
-                  <span className="text-xs font-bold text-white group-hover:text-primary transition-colors">Grok Imagine</span>
-                </button>
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => { setShowModelMenu(!showModelMenu); setShowRatioMenu(false); setShowStyleMenu(false); }}
+                    className="flex items-center gap-1.5 md:gap-2.5 px-3 md:px-4 py-2 md:py-2.5 bg-white/5 hover:bg-white/10 rounded-xl md:rounded-2xl transition-all border border-white/5 group whitespace-nowrap"
+                  >
+                    <div className="w-5 h-5 bg-primary rounded-md flex items-center justify-center shadow-lg shadow-primary/20">
+                      <span className="text-[10px] font-black text-black">G</span>
+                    </div>
+                    <span className="text-xs font-bold text-white group-hover:text-primary transition-colors">
+                      {Object.entries(IMAGE_MODELS).find(([, v]) => v === model)?.[0] || model}
+                    </span>
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4" className="opacity-20 group-hover:opacity-100 transition-opacity">
+                      <path d="M6 9l6 6 6-6" />
+                    </svg>
+                  </button>
+                  {showModelMenu && (
+                    <div className="absolute bottom-full left-0 mb-2 bg-[#1a1a1a] border border-white/10 rounded-xl py-1 shadow-xl z-50">
+                      {Object.entries(IMAGE_MODELS).map(([label, value]) => (
+                        <button key={value} onClick={() => handleModelChange(value)}
+                          className={`block w-full text-left px-4 py-2 text-xs font-bold transition-colors ${model === value ? "text-primary bg-white/5" : "text-white hover:bg-white/5"}`}
+                        >{label}</button>
+                      ))}
+                    </div>
+                  )}
+                </div>
 
-                {/* Mode Toggle */}
-                <button
-                  type="button"
-                  onClick={() => setMode(mode === "generate" ? "edit" : "generate")}
-                  className="flex items-center gap-1.5 md:gap-2.5 px-3 md:px-4 py-2 md:py-2.5 bg-white/5 hover:bg-white/10 rounded-xl md:rounded-2xl transition-all border border-white/5 group whitespace-nowrap"
-                >
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="opacity-60 text-secondary">
-                    {mode === "generate" ? (
-                      <>
-                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-                        <circle cx="8.5" cy="8.5" r="1.5" />
-                        <polyline points="21 15 16 10 5 21" />
-                      </>
-                    ) : (
-                      <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" />
-                    )}
-                  </svg>
-                  <span className="text-xs font-bold text-white group-hover:text-primary transition-colors">
-                    {mode === "generate" ? "Generate" : "Edit"}
-                  </span>
-                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4" className="opacity-20 group-hover:opacity-100 transition-opacity">
-                    <path d="M6 9l6 6 6-6" />
-                  </svg>
-                </button>
+                {/* Style Selector */}
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => { setShowStyleMenu(!showStyleMenu); setShowModelMenu(false); setShowRatioMenu(false); }}
+                    className="flex items-center gap-1.5 md:gap-2.5 px-3 md:px-4 py-2 md:py-2.5 bg-white/5 hover:bg-white/10 rounded-xl md:rounded-2xl transition-all border border-white/5 group whitespace-nowrap"
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="opacity-60 text-secondary">
+                      <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
+                    </svg>
+                    <span className="text-xs font-bold text-white group-hover:text-primary transition-colors">{style}</span>
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4" className="opacity-20 group-hover:opacity-100 transition-opacity">
+                      <path d="M6 9l6 6 6-6" />
+                    </svg>
+                  </button>
+                  {showStyleMenu && (
+                    <div className="absolute bottom-full left-0 mb-2 bg-[#1a1a1a] border border-white/10 rounded-xl py-1 shadow-xl z-50 max-h-60 overflow-y-auto custom-scrollbar">
+                      {IMAGE_STYLES.map((s) => (
+                        <button key={s} onClick={() => { setStyle(s); setShowStyleMenu(false); }}
+                          className={`block w-full text-left px-4 py-2 text-xs font-bold transition-colors ${style === s ? "text-primary bg-white/5" : "text-white hover:bg-white/5"}`}
+                        >{s}</button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Mode Toggle (only for imagen-flash which supports image reference) */}
+                {MODELS_WITH_IMAGE_REF.includes(model) && (
+                  <button
+                    type="button"
+                    onClick={() => setMode(mode === "generate" ? "edit" : "generate")}
+                    className="flex items-center gap-1.5 md:gap-2.5 px-3 md:px-4 py-2 md:py-2.5 bg-white/5 hover:bg-white/10 rounded-xl md:rounded-2xl transition-all border border-white/5 group whitespace-nowrap"
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="opacity-60 text-secondary">
+                      {mode === "generate" ? (
+                        <>
+                          <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                          <circle cx="8.5" cy="8.5" r="1.5" />
+                          <polyline points="21 15 16 10 5 21" />
+                        </>
+                      ) : (
+                        <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" />
+                      )}
+                    </svg>
+                    <span className="text-xs font-bold text-white group-hover:text-primary transition-colors">
+                      {mode === "generate" ? "Generate" : "Edit"}
+                    </span>
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4" className="opacity-20 group-hover:opacity-100 transition-opacity">
+                      <path d="M6 9l6 6 6-6" />
+                    </svg>
+                  </button>
+                )}
 
                 {/* Aspect Ratio */}
                 {mode === "generate" && (
                   <div className="relative">
                     <button
                       type="button"
-                      onClick={() => setShowRatioMenu(!showRatioMenu)}
+                      onClick={() => { setShowRatioMenu(!showRatioMenu); setShowModelMenu(false); setShowStyleMenu(false); }}
                       className="flex items-center gap-1.5 md:gap-2.5 px-3 md:px-4 py-2 md:py-2.5 bg-white/5 hover:bg-white/10 rounded-xl md:rounded-2xl transition-all border border-white/5 group whitespace-nowrap"
                     >
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="opacity-60 text-secondary">
@@ -251,7 +352,7 @@ export default function ImageGenerator() {
                     </button>
                     {showRatioMenu && (
                       <div className="absolute bottom-full left-0 mb-2 bg-[#1a1a1a] border border-white/10 rounded-xl py-1 shadow-xl z-50">
-                        {ASPECT_RATIOS.map((r) => (
+                        {currentAspectRatios.map((r) => (
                           <button key={r} onClick={() => { setAspectRatio(r); setShowRatioMenu(false); }}
                             className={`block w-full text-left px-4 py-2 text-xs font-bold transition-colors ${aspectRatio === r ? "text-primary bg-white/5" : "text-white hover:bg-white/5"}`}
                           >{r}</button>

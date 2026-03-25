@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 
-const XAI_API_URL = "https://api.x.ai/v1/videos/generations";
+const GEMINIGEN_API_URL = "https://api.geminigen.ai/uapi/v1/video-gen/veo";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -14,17 +14,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  const apiKey = process.env.XAI_API_KEY;
+  const apiKey = process.env.GEMINIGEN_API_KEY;
   if (!apiKey) {
-    return res.status(500).json({ error: "XAI_API_KEY not configured" });
+    return res.status(500).json({ error: "GEMINIGEN_API_KEY not configured" });
   }
 
   const {
     prompt,
-    duration = 5,
+    model = "veo-2",
     aspect_ratio = "16:9",
-    resolution = "480p",
-    image_url,
+    resolution = "720p",
   } = req.body;
 
   if (!prompt) {
@@ -32,53 +31,48 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const body: Record<string, unknown> = {
-      model: "grok-imagine-video",
-      prompt,
-      duration: typeof duration === "string" ? parseInt(duration, 10) : duration,
-      aspect_ratio,
-      resolution,
-    };
+    const formBody = new URLSearchParams();
+    formBody.append("prompt", prompt);
+    formBody.append("model", model);
+    formBody.append("aspect_ratio", aspect_ratio);
+    formBody.append("resolution", resolution);
 
-    if (image_url) {
-      body.image = {
-        url: image_url,
-        type: "image_url",
-      };
-    }
-
-    const resp = await fetch(XAI_API_URL, {
+    const resp = await fetch(GEMINIGEN_API_URL, {
       method: "POST",
       headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
+        "x-api-key": apiKey,
+        "Accept": "application/json",
       },
-      body: JSON.stringify(body),
+      body: formBody,
     });
 
     if (!resp.ok) {
+      if (resp.status >= 400 && resp.status < 500) {
+        try {
+          const errData = await resp.json();
+          const errMsg = errData?.detail?.error_message || `Request failed (${resp.status})`;
+          return res.status(resp.status).json({ error: errMsg });
+        } catch {
+          return res.status(resp.status).json({ error: `Client error: ${resp.status}` });
+        }
+      }
       const errText = await resp.text().catch(() => "");
       return res.status(resp.status).json({
-        error: `xAI API error (${resp.status})`,
+        error: `GeminiGen API error (${resp.status})`,
         details: errText.slice(0, 500),
       });
     }
 
     const data = await resp.json();
 
-    // xAI API returns { request_id: "..." } for async video generation
-    if (data.request_id) {
+    // GeminiGen returns { id, uuid, status, status_percentage, ... }
+    // status=1 means processing, status=2 means completed
+    if (data.uuid) {
       return res.status(200).json({
-        status: "pending",
-        post_id: data.request_id,
-      });
-    }
-
-    // If the video is immediately ready (unlikely but handle it)
-    if (data.status === "done" && data.video?.url) {
-      return res.status(200).json({
-        status: "done",
-        video: { url: data.video.url },
+        status: "submitted",
+        post_id: data.uuid,
+        message: "Video generation request submitted successfully. Results will be sent to your webhook.",
+        raw: data,
       });
     }
 
@@ -86,6 +80,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   } catch (err) {
     return res
       .status(500)
-      .json({ error: "Failed to call xAI API", details: String(err) });
+      .json({ error: "Failed to call GeminiGen API", details: String(err) });
   }
 }

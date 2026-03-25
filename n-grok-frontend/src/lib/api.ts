@@ -2,33 +2,27 @@ const API_URL = import.meta.env.VITE_API_URL || "";
 
 export interface ImageGenerateRequest {
   prompt: string;
-  n?: number;
+  model?: string;
   aspect_ratio?: string;
-  response_format?: string;
+  style?: string;
 }
 
 export interface ImageEditRequest {
   prompt: string;
-  image_url: string;
-  n?: number;
-  response_format?: string;
+  image_base64: string;
 }
 
 export interface VideoGenerateRequest {
   prompt: string;
-  duration?: number;
+  model?: string;
   aspect_ratio?: string;
   resolution?: string;
-  image_url?: string;
 }
 
-export interface VideoStatusResponse {
-  status: "pending" | "done" | "expired" | "failed";
-  video?: {
-    url: string;
-    duration?: number;
-  };
-  model?: string;
+export interface VideoSubmitResponse {
+  status: "submitted" | "processing";
+  post_id?: string;
+  message?: string;
 }
 
 export interface ImageResponse {
@@ -64,7 +58,7 @@ export async function editImage(req: ImageEditRequest): Promise<ImageResponse> {
   return res.json();
 }
 
-export async function generateVideo(req: VideoGenerateRequest): Promise<VideoStatusResponse & { post_id?: string }> {
+export async function generateVideo(req: VideoGenerateRequest): Promise<VideoSubmitResponse> {
   const res = await fetch(`${API_URL}/api/videos/generate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -73,15 +67,6 @@ export async function generateVideo(req: VideoGenerateRequest): Promise<VideoSta
   if (!res.ok) {
     const err = await res.text();
     throw new Error(`Video generation failed: ${err}`);
-  }
-  return res.json();
-}
-
-export async function getVideoStatus(requestId: string): Promise<VideoStatusResponse> {
-  const res = await fetch(`${API_URL}/api/videos/status/${requestId}`);
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Video status check failed: ${err}`);
   }
   return res.json();
 }
