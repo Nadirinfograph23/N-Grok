@@ -5,9 +5,10 @@ import { generateVideo, uploadImage } from "../lib/api";
 type GenerationStatus = "idle" | "submitting" | "submitted" | "error";
 
 const VIDEO_MODELS: Record<string, string> = {
-  "Veo 3": "veo-3",
-  "Veo 3 Fast": "veo-3-fast",
-  "Veo 2": "veo-2",
+  "Grok 3 Auto": "grok-3-auto",
+  "Grok 3 Fast": "grok-3-fast",
+  "Grok 4": "grok-4",
+  "Grok 4 Mini": "grok-4-mini-thinking-tahoe",
 };
 
 const ASPECT_RATIOS = ["16:9", "9:16"];
@@ -15,7 +16,7 @@ const RESOLUTIONS = ["720p", "1080p"];
 
 export default function VideoGenerator() {
   const [prompt, setPrompt] = useState("");
-  const [model, setModel] = useState("veo-2");
+  const [model, setModel] = useState("grok-3-auto");
   const [aspectRatio, setAspectRatio] = useState("16:9");
   const [resolution, setResolution] = useState("720p");
   const [, setImageRef] = useState<string | null>(null);
