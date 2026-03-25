@@ -1,5 +1,15 @@
-import { getPublicKey, sign } from "@noble/secp256k1";
-import { createHash } from "crypto";
+import { getPublicKey, sign, hashes } from "@noble/secp256k1";
+import { createHash, createHmac } from "crypto";
+
+// Configure sync hash functions required by @noble/secp256k1
+hashes.sha256 = (msg: Uint8Array): Uint8Array => {
+  return new Uint8Array(createHash("sha256").update(msg).digest());
+};
+hashes.hmacSha256 = (key: Uint8Array, message: Uint8Array): Uint8Array => {
+  return new Uint8Array(
+    createHmac("sha256", key).update(message).digest()
+  );
+};
 
 function sha256(data: Uint8Array): Uint8Array {
   return new Uint8Array(createHash("sha256").update(data).digest());
