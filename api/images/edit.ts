@@ -29,14 +29,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     // Use imagen-flash model which supports image reference for editing
-    const formBody = new URLSearchParams();
-    formBody.append("prompt", prompt);
-    formBody.append("model", "imagen-flash");
-    formBody.append("aspect_ratio", "16:9");
-
-    // For image editing with GeminiGen, we send the base64 image data
-    // The API accepts files via multipart form data
-    // We use a FormData approach with the image as a blob
     const formData = new FormData();
     formData.append("prompt", prompt);
     formData.append("model", "imagen-flash");
