@@ -139,15 +139,15 @@ async function bootstrapSession(): Promise<SessionContext> {
     ((loadResp.headers as any).getSetCookie?.() as string[]) || [];
   cookies = parseCookies(setCookies, cookies);
 
-  // Extract scripts
+  // Extract scripts (support both relative and CDN-absolute URLs)
   const scriptMatches =
-    loadHtml.match(/<script[^>]+src="(\/_next\/static\/chunks\/[^"]+)"/g) || [];
+    loadHtml.match(/<script[^>]+src="((?:https:\/\/cdn\.grok\.com)?\/[^"]*_next\/static\/chunks\/[^"]+)"/g) || [];
   const scripts = scriptMatches
     .map((m: string) => {
       const match = m.match(/src="([^"]+)"/);
       return match ? match[1] : "";
     })
-    .filter((s: string) => s.startsWith("/_next/static/chunks/"));
+    .filter((s: string) => s.includes("/_next/static/chunks/"));
 
   const { actions, xsidScript } = await parseGrokAsync(scripts);
 

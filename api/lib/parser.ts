@@ -45,7 +45,7 @@ export async function parseValuesAsync(
   svgData += parts.join(" C");
 
   if (scriptId) {
-    const scriptLink = `https://grok.com/_next/${scriptId}`;
+    const scriptLink = scriptId.startsWith("http") ? scriptId : `https://cdn.grok.com/_next/${scriptId}`;
     const scriptContent = await fetchText(scriptLink);
     const matches = scriptContent.match(/x\[(\d+)\]\s*,\s*16/g) || [];
     const numbers = matches.map((m: string) => {
@@ -65,7 +65,8 @@ export async function parseGrokAsync(
   let scriptContent2 = "";
 
   for (const script of scripts) {
-    const content = await fetchText(`https://grok.com${script}`);
+    const scriptUrl = script.startsWith("http") ? script : `https://grok.com${script}`;
+    const content = await fetchText(scriptUrl);
     if (content.includes("anonPrivateKey")) {
       scriptContent1 = content;
     } else if (content.includes("880932)")) {
