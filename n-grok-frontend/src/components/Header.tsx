@@ -1,6 +1,6 @@
 interface HeaderProps {
-  activeTab: "video" | "image";
-  onTabChange: (tab: "video" | "image") => void;
+  activeTab: "video" | "image" | "chat";
+  onTabChange: (tab: "video" | "image" | "chat") => void;
 }
 
 export default function Header({ activeTab, onTabChange }: HeaderProps) {
@@ -18,6 +18,17 @@ export default function Header({ activeTab, onTabChange }: HeaderProps) {
           </div>
 
           <nav className="flex items-center gap-5 text-[13px] font-semibold text-secondary">
+            <button
+              onClick={() => onTabChange("chat")}
+              className={`relative bg-transparent border-none p-0 flex items-center gap-1 whitespace-nowrap transition-colors cursor-pointer ${
+                activeTab === "chat" ? "text-white" : "text-secondary hover:text-white"
+              }`}
+            >
+              Chat
+              {activeTab === "chat" && (
+                <div className="absolute -bottom-[17px] left-1/2 -translate-x-1/2 w-1 h-1 bg-primary rounded-full" />
+              )}
+            </button>
             <button
               onClick={() => onTabChange("image")}
               className={`relative bg-transparent border-none p-0 flex items-center gap-1 whitespace-nowrap transition-colors cursor-pointer ${

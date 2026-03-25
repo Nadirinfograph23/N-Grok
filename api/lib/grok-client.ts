@@ -9,6 +9,10 @@ import {
 } from "./headers";
 import { between, uuidv4, randomHex } from "./utils";
 
+// ---------------------------------------------------------------------------
+// Cookie helpers
+// ---------------------------------------------------------------------------
+
 interface CookieJar {
   [key: string]: string;
 }
@@ -36,7 +40,12 @@ function cookieString(jar: CookieJar): string {
     .join("; ");
 }
 
+// ---------------------------------------------------------------------------
+// Model mapping  (aligned with Grok3API modelName values)
+// ---------------------------------------------------------------------------
+
 const MODELS: Record<string, [string, string]> = {
+  "grok-3": ["MODEL_MODE_AUTO", "auto"],
   "grok-3-auto": ["MODEL_MODE_AUTO", "auto"],
   "grok-3-fast": ["MODEL_MODE_FAST", "fast"],
   "grok-4": ["MODEL_MODE_EXPERT", "expert"],
@@ -47,22 +56,76 @@ const MODELS: Record<string, [string, string]> = {
 };
 
 function getModelMode(model: string, index: number): string {
-  const entry = MODELS[model] || MODELS["grok-3-auto"];
+  const entry = MODELS[model] || MODELS["grok-3"];
   return entry[index];
 }
 
-export interface GrokImageResult {
-  response: string | null;
-  images: string[] | null;
-  error?: string;
+// ---------------------------------------------------------------------------
+// Response types  (aligned with Grok3API GrokResponse / ModelResponse)
+// ---------------------------------------------------------------------------
+
+export interface ModelResponse {
+  responseId: string;
+  message: string;
+  sender: string;
+  generatedImageUrls: string[];
+  query: string;
 }
 
-export async function generateImageWithGrok(
-  prompt: string,
-  model: string = "grok-3-auto"
-): Promise<GrokImageResult> {
-  const modelMode = getModelMode(model, 0);
-  const keys = generateKeys();
+export interface GrokResponse {
+  modelResponse: ModelResponse;
+  isThinking: boolean;
+  isSoftStop: boolean;
+  responseId: string;
+  conversationId: string | null;
+  title: string | null;
+  error: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Ask parameters  (aligned with Grok3API GrokClient.ask())
+// ---------------------------------------------------------------------------
+
+export interface AskGrokOptions {
+  message: string;
+  modelName?: string;
+  temporary?: boolean;
+  fileAttachments?: string[];
+  imageAttachments?: string[];
+  customInstructions?: string;
+  deepsearchPreset?: string;
+  disableSearch?: boolean;
+  enableImageGeneration?: boolean;
+  enableImageStreaming?: boolean;
+  enableSideBySide?: boolean;
+  imageGenerationCount?: number;
+  isPreset?: boolean;
+  isReasoning?: boolean;
+  returnImageBytes?: boolean;
+  returnRawGrokInXaiRequest?: boolean;
+  sendFinalMetadata?: boolean;
+  toolOverrides?: Record<string, unknown>;
+  forceConcise?: boolean;
+  disableTextFollowUps?: boolean;
+  webpageUrls?: string[];
+  disableArtifact?: boolean;
+  responseModelId?: string;
+  conversationId?: string;
+  parentResponseId?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Session bootstrap - obtain cookies + x-statsig-id from grok.com
+// ---------------------------------------------------------------------------
+
+interface SessionContext {
+  cookies: CookieJar;
+  baggage: string;
+  sentryTrace: string;
+  xsid: string;
+}
+
+async function bootstrapSession(): Promise<SessionContext> {
   let cookies: CookieJar = {};
 
   // Step 1: Load grok.com/c
@@ -72,7 +135,8 @@ export async function generateImageWithGrok(
   });
 
   const loadHtml = await loadResp.text();
-  const setCookies = (loadResp.headers as any).getSetCookie?.() as string[] || [];
+  const setCookies =
+    ((loadResp.headers as any).getSetCookie?.() as string[]) || [];
   cookies = parseCookies(setCookies, cookies);
 
   // Extract scripts
@@ -85,25 +149,21 @@ export async function generateImageWithGrok(
     })
     .filter((s: string) => s.startsWith("/_next/static/chunks/"));
 
-  // Parse scripts to get actions and xsid script
   const { actions, xsidScript } = await parseGrokAsync(scripts);
 
-  const baggage = between(
-    loadHtml,
-    '<meta name="baggage" content="',
-    '"'
-  );
+  const baggage = between(loadHtml, '<meta name="baggage" content="', '"');
   const sentryTrace = between(
     loadHtml,
     '<meta name="sentry-trace" content="',
     "-"
   );
 
+  const keys = generateKeys();
+
   // Step 2: First c_request (multipart with public key)
   const boundary = `----formdata-${randomHex(8)}`;
   const publicKeyBytes = new Uint8Array(keys.userPublicKey);
 
-  // Build multipart body manually
   let multipartBody = "";
   multipartBody += `--${boundary}\r\n`;
   multipartBody += `Content-Disposition: form-data; name="0"\r\n\r\n`;
@@ -112,7 +172,6 @@ export async function generateImageWithGrok(
   multipartBody += `Content-Disposition: form-data; name="1"; filename="blob"\r\n`;
   multipartBody += `Content-Type: application/octet-stream\r\n\r\n`;
 
-  // We need to send binary data, so use ArrayBuffer approach
   const textEncoder = new TextEncoder();
   const preamble = textEncoder.encode(multipartBody);
   const postamble = textEncoder.encode(`\r\n--${boundary}--\r\n`);
@@ -143,7 +202,8 @@ export async function generateImageWithGrok(
   });
 
   const cResp1Text = await cResp1.text();
-  const setCookies1 = (cResp1.headers as any).getSetCookie?.() as string[] || [];
+  const setCookies1 =
+    ((cResp1.headers as any).getSetCookie?.() as string[]) || [];
   cookies = parseCookies(setCookies1, cookies);
 
   const anonUser = between(cResp1Text, '{"anonUserId":"', '"');
@@ -166,7 +226,8 @@ export async function generateImageWithGrok(
   });
 
   const cResp2Bytes = new Uint8Array(await cResp2.arrayBuffer());
-  const setCookies2 = (cResp2.headers as any).getSetCookie?.() as string[] || [];
+  const setCookies2 =
+    ((cResp2.headers as any).getSetCookie?.() as string[]) || [];
   cookies = parseCookies(setCookies2, cookies);
 
   // Extract challenge from hex response
@@ -208,7 +269,8 @@ export async function generateImageWithGrok(
   });
 
   const cResp3Text = await cResp3.text();
-  const setCookies3 = (cResp3.headers as any).getSetCookie?.() as string[] || [];
+  const setCookies3 =
+    ((cResp3.headers as any).getSetCookie?.() as string[]) || [];
   cookies = parseCookies(setCookies3, cookies);
 
   // Parse verification token and SVG data
@@ -219,7 +281,7 @@ export async function generateImageWithGrok(
     xsidScript
   );
 
-  // Step 5: Generate signature and make conversation request
+  // Generate x-statsig-id
   const xsid = generateSign(
     "/rest/app-chat/conversations/new",
     "POST",
@@ -228,107 +290,299 @@ export async function generateImageWithGrok(
     numbers
   );
 
-  const convHeaders: Record<string, string> = {
+  return { cookies, baggage, sentryTrace, xsid };
+}
+
+// ---------------------------------------------------------------------------
+// Upload image to grok.com  (aligned with Grok3API _upload_image)
+// ---------------------------------------------------------------------------
+
+export async function uploadImageToGrok(
+  base64Content: string,
+  fileName: string,
+  fileMimeType: string,
+  session: SessionContext
+): Promise<string> {
+  const uploadHeaders: Record<string, string> = {
     ...CONVERSATION_HEADERS,
-    baggage,
-    "sentry-trace": `${sentryTrace}-${uuidv4().replace(/-/g, "").substring(0, 16)}-0`,
-    "x-statsig-id": xsid,
+    "x-statsig-id": session.xsid,
     "x-xai-request-id": uuidv4(),
-    traceparent: `00-${randomHex(16)}-${randomHex(8)}-00`,
-    cookie: cookieString(cookies),
+    cookie: cookieString(session.cookies),
   };
 
-  const conversationData = {
-    temporary: false,
-    modelName: model,
-    message: prompt,
-    fileAttachments: [],
-    imageAttachments: [],
-    disableSearch: false,
-    enableImageGeneration: true,
-    returnImageBytes: false,
-    returnRawGrokInXaiRequest: false,
-    enableImageStreaming: true,
-    imageGenerationCount: 2,
-    forceConcise: false,
-    toolOverrides: {},
-    enableSideBySide: true,
-    sendFinalMetadata: true,
-    isReasoning: false,
-    webpageUrls: [],
-    disableTextFollowUps: false,
+  const resp = await fetch("https://grok.com/rest/app-chat/upload-file", {
+    method: "POST",
+    headers: fixOrder(uploadHeaders, CONVERSATION_HEADERS),
+    body: JSON.stringify({
+      fileName,
+      fileMimeType,
+      content: base64Content,
+    }),
+    redirect: "manual",
+  });
+
+  const data = await resp.json();
+  if (!data.fileMetadataId) {
+    throw new Error("Server response does not contain fileMetadataId");
+  }
+  return data.fileMetadataId;
+}
+
+// ---------------------------------------------------------------------------
+// Parse Grok streaming response  (aligned with Grok3API _send_request)
+// ---------------------------------------------------------------------------
+
+function parseGrokStreamResponse(responseText: string): GrokResponse {
+  let finalResponse: ModelResponse | null = null;
+  let conversationId: string | null = null;
+  let title: string | null = null;
+  let isThinking = false;
+  let isSoftStop = false;
+  let responseId = "";
+
+  const emptyModel: ModelResponse = {
+    responseId: "",
+    message: "",
+    sender: "",
+    generatedImageUrls: [],
+    query: "",
+  };
+
+  const lines = responseText.trim().split("\n");
+  for (const line of lines) {
+    try {
+      const data = JSON.parse(line);
+      const result = data?.result || {};
+
+      // Extract conversation info
+      if (result.conversation) {
+        conversationId =
+          conversationId || result.conversation.conversationId || null;
+        title = title || result.conversation.title || null;
+      }
+
+      // Extract title
+      if (result.title?.newTitle) {
+        title = result.title.newTitle;
+      }
+
+      // Extract thinking / soft stop flags
+      if (result.response?.isThinking !== undefined) {
+        isThinking = result.response.isThinking;
+      }
+      if (result.response?.isSoftStop !== undefined) {
+        isSoftStop = result.response.isSoftStop;
+      }
+
+      // Extract modelResponse (keep last complete one)
+      const mr =
+        result.response?.modelResponse || result.modelResponse || null;
+      if (mr && mr.message !== undefined) {
+        finalResponse = {
+          responseId: mr.responseId || "",
+          message: mr.message || "",
+          sender: mr.sender || "",
+          generatedImageUrls: mr.generatedImageUrls || [],
+          query: mr.query || "",
+        };
+        responseId = mr.responseId || responseId;
+      }
+    } catch {
+      // Skip non-JSON lines
+    }
+  }
+
+  if (!finalResponse) {
+    if (responseText.includes("rejected by anti-bot rules")) {
+      return {
+        modelResponse: emptyModel,
+        isThinking: false,
+        isSoftStop: false,
+        responseId: "",
+        conversationId: null,
+        title: null,
+        error: "Request rejected by anti-bot rules. Please try again.",
+      };
+    }
+    if (responseText.includes("Grok is under heavy usage")) {
+      return {
+        modelResponse: emptyModel,
+        isThinking: false,
+        isSoftStop: false,
+        responseId: "",
+        conversationId: null,
+        title: null,
+        error: "Grok is under heavy usage right now. Please try again later.",
+      };
+    }
+    if (responseText.includes("Too many requests")) {
+      return {
+        modelResponse: emptyModel,
+        isThinking: false,
+        isSoftStop: false,
+        responseId: "",
+        conversationId: null,
+        title: null,
+        error: "Too many requests. Please try again later.",
+      };
+    }
+
+    return {
+      modelResponse: emptyModel,
+      isThinking: false,
+      isSoftStop: false,
+      responseId: "",
+      conversationId: null,
+      title: null,
+      error: `Unexpected response from Grok: ${responseText.substring(0, 200)}`,
+    };
+  }
+
+  return {
+    modelResponse: finalResponse,
+    isThinking,
+    isSoftStop,
+    responseId,
+    conversationId,
+    title,
+    error: null,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// askGrok - main entry point  (aligned with Grok3API GrokClient.ask())
+// ---------------------------------------------------------------------------
+
+export async function askGrok(options: AskGrokOptions): Promise<GrokResponse> {
+  const {
+    message,
+    modelName = "grok-3",
+    temporary = false,
+    fileAttachments = [],
+    imageAttachments = [],
+    customInstructions = "",
+    deepsearchPreset = "",
+    disableSearch = false,
+    enableImageGeneration = true,
+    enableImageStreaming = true,
+    enableSideBySide = true,
+    imageGenerationCount = 2,
+    isPreset = false,
+    isReasoning = false,
+    returnImageBytes = false,
+    returnRawGrokInXaiRequest = false,
+    sendFinalMetadata = true,
+    toolOverrides = {},
+    forceConcise = true,
+    disableTextFollowUps = true,
+    webpageUrls = [],
+    disableArtifact = false,
+    responseModelId,
+    conversationId,
+    parentResponseId,
+  } = options;
+
+  const modelMode = getModelMode(modelName, 0);
+  const session = await bootstrapSession();
+
+  // Determine target URL (new vs existing conversation)
+  const targetUrl = conversationId
+    ? `https://grok.com/rest/app-chat/conversations/${conversationId}/responses`
+    : "https://grok.com/rest/app-chat/conversations/new";
+
+  // Build payload (aligned with Grok3API ask() payload)
+  const payload: Record<string, unknown> = {
+    temporary,
+    modelName,
+    message,
+    fileAttachments,
+    imageAttachments,
+    disableSearch,
+    enableImageGeneration,
+    returnImageBytes,
+    returnRawGrokInXaiRequest,
+    enableImageStreaming,
+    imageGenerationCount,
+    forceConcise,
+    toolOverrides,
+    enableSideBySide,
+    sendFinalMetadata,
+    isPreset,
+    isReasoning,
+    disableTextFollowUps,
+    customInstructions,
+    "deepsearch preset": deepsearchPreset,
+    webpageUrls,
+    disableArtifact,
     responseMetadata: {
       requestModelDetails: {
-        modelId: model,
+        modelId: responseModelId || modelName,
       },
     },
-    disableMemory: false,
-    forceSideBySide: false,
-    modelMode: modelMode,
+    modelMode,
     isAsyncChat: false,
   };
 
-  const convResp = await fetch(
-    "https://grok.com/rest/app-chat/conversations/new",
-    {
-      method: "POST",
-      headers: fixOrder(convHeaders, CONVERSATION_HEADERS),
-      body: JSON.stringify(conversationData),
-      redirect: "manual",
-    }
-  );
+  if (parentResponseId) {
+    payload.parentResponseId = parentResponseId;
+  }
+
+  // Build headers
+  const convHeaders: Record<string, string> = {
+    ...CONVERSATION_HEADERS,
+    baggage: session.baggage,
+    "sentry-trace": `${session.sentryTrace}-${uuidv4().replace(/-/g, "").substring(0, 16)}-0`,
+    "x-statsig-id": session.xsid,
+    "x-xai-request-id": uuidv4(),
+    traceparent: `00-${randomHex(16)}-${randomHex(8)}-00`,
+    cookie: cookieString(session.cookies),
+  };
+
+  const convResp = await fetch(targetUrl, {
+    method: "POST",
+    headers: fixOrder(convHeaders, CONVERSATION_HEADERS),
+    body: JSON.stringify(payload),
+    redirect: "manual",
+  });
 
   const convText = await convResp.text();
+  return parseGrokStreamResponse(convText);
+}
 
-  if (convText.includes("modelResponse")) {
-    let response: string | null = null;
-    let imageUrls: string[] | null = null;
+// ---------------------------------------------------------------------------
+// Legacy wrapper for backward compatibility
+// ---------------------------------------------------------------------------
 
-    const lines = convText.trim().split("\n");
-    for (const line of lines) {
-      try {
-        const data = JSON.parse(line);
+export interface GrokImageResult {
+  response: string | null;
+  images: string[] | null;
+  error?: string;
+}
 
-        if (
-          !response &&
-          data?.result?.response?.modelResponse?.message
-        ) {
-          response = data.result.response.modelResponse.message;
-        }
+export async function generateImageWithGrok(
+  prompt: string,
+  model: string = "grok-3"
+): Promise<GrokImageResult> {
+  const grokResp = await askGrok({
+    message: prompt,
+    modelName: model,
+    enableImageGeneration: true,
+    imageGenerationCount: 2,
+    forceConcise: true,
+    disableTextFollowUps: true,
+  });
 
-        if (
-          !imageUrls &&
-          data?.result?.response?.modelResponse?.generatedImageUrls
-        ) {
-          const urls =
-            data.result.response.modelResponse.generatedImageUrls;
-          if (urls && (Array.isArray(urls) ? urls.length > 0 : true)) {
-            imageUrls = Array.isArray(urls) ? urls : [urls];
-          }
-        }
-      } catch {
-        // Skip non-JSON lines
-      }
-    }
-
-    return { response, images: imageUrls };
-  } else if (convText.includes("rejected by anti-bot rules")) {
-    return {
-      response: null,
-      images: null,
-      error: "Request rejected by anti-bot rules. Please try again.",
-    };
-  } else if (convText.includes("Grok is under heavy usage")) {
-    return {
-      response: null,
-      images: null,
-      error: "Grok is under heavy usage right now. Please try again later.",
-    };
-  } else {
-    return {
-      response: null,
-      images: null,
-      error: `Unexpected response from Grok: ${convText.substring(0, 200)}`,
-    };
+  if (grokResp.error) {
+    return { response: null, images: null, error: grokResp.error };
   }
+
+  const images =
+    grokResp.modelResponse.generatedImageUrls.length > 0
+      ? grokResp.modelResponse.generatedImageUrls
+      : null;
+
+  return {
+    response: grokResp.modelResponse.message || null,
+    images,
+  };
 }
