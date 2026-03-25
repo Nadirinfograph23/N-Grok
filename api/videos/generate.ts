@@ -1,6 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-
-const GEMINIGEN_API_URL = "https://api.geminigen.ai/uapi/v1/video-gen/veo";
+import { generateImageWithGrok } from "../lib/grok-client";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -14,72 +13,39 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  const apiKey = process.env.GEMINIGEN_API_KEY;
-  if (!apiKey) {
-    return res.status(500).json({ error: "GEMINIGEN_API_KEY not configured" });
-  }
-
-  const {
-    prompt,
-    model = "veo-2",
-    aspect_ratio = "16:9",
-    resolution = "720p",
-  } = req.body;
+  const { prompt, model = "grok-3-auto" } = req.body;
 
   if (!prompt) {
     return res.status(400).json({ error: "Missing prompt" });
   }
 
   try {
-    const formBody = new URLSearchParams();
-    formBody.append("prompt", prompt);
-    formBody.append("model", model);
-    formBody.append("aspect_ratio", aspect_ratio);
-    formBody.append("resolution", resolution);
+    const result = await generateImageWithGrok(
+      `Create a video: ${prompt}`,
+      model
+    );
 
-    const resp = await fetch(GEMINIGEN_API_URL, {
-      method: "POST",
-      headers: {
-        "x-api-key": apiKey,
-        "Accept": "application/json",
-      },
-      body: formBody,
-    });
-
-    if (!resp.ok) {
-      if (resp.status >= 400 && resp.status < 500) {
-        try {
-          const errData = await resp.json();
-          const errMsg = errData?.detail?.error_message || `Request failed (${resp.status})`;
-          return res.status(resp.status).json({ error: errMsg });
-        } catch {
-          return res.status(resp.status).json({ error: `Client error: ${resp.status}` });
-        }
-      }
-      const errText = await resp.text().catch(() => "");
-      return res.status(resp.status).json({
-        error: `GeminiGen API error (${resp.status})`,
-        details: errText.slice(0, 500),
-      });
+    if (result.error) {
+      return res.status(500).json({ error: result.error });
     }
 
-    const data = await resp.json();
-
-    // GeminiGen returns { id, uuid, status, status_percentage, ... }
-    // status=1 means processing, status=2 means completed
-    if (data.uuid) {
+    if (result.images && result.images.length > 0) {
       return res.status(200).json({
         status: "submitted",
-        post_id: data.uuid,
-        message: "Video generation request submitted successfully. Results will be sent to your webhook.",
-        raw: data,
+        post_id: `grok-${Date.now()}`,
+        message: "Content generated successfully.",
+        urls: result.images,
       });
     }
 
-    return res.status(200).json(data);
+    return res.status(200).json({
+      status: "submitted",
+      post_id: `grok-${Date.now()}`,
+      message: result.response || "Request processed. Video generation via Grok conversation.",
+    });
   } catch (err) {
     return res
       .status(500)
-      .json({ error: "Failed to call GeminiGen API", details: String(err) });
+      .json({ error: "Failed to generate video", details: String(err) });
   }
 }

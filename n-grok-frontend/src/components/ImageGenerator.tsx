@@ -5,10 +5,10 @@ import { generateImage, editImage, uploadImage } from "../lib/api";
 type Mode = "generate" | "edit";
 
 const IMAGE_MODELS: Record<string, string> = {
-  "Imagen 4 Ultra": "imagen-4-ultra",
-  "Imagen 4 Fast": "imagen-4-fast",
-  "Imagen 4": "imagen-4",
-  "Imagen Flash": "imagen-flash",
+  "Grok 3 Auto": "grok-3-auto",
+  "Grok 3 Fast": "grok-3-fast",
+  "Grok 4": "grok-4",
+  "Grok 4 Mini": "grok-4-mini-thinking-tahoe",
 };
 
 const IMAGE_STYLES = [
@@ -32,18 +32,18 @@ const IMAGE_STYLES = [
 ];
 
 const MODEL_ASPECT_RATIOS: Record<string, string[]> = {
-  "imagen-4-ultra": ["1:1", "3:4", "4:3", "16:9", "9:16"],
-  "imagen-4-fast": ["1:1", "3:4", "4:3", "16:9", "9:16"],
-  "imagen-4": ["1:1", "3:4", "4:3", "16:9", "9:16"],
-  "imagen-flash": ["16:9", "9:16"],
+  "grok-3-auto": ["1:1", "3:4", "4:3", "16:9", "9:16"],
+  "grok-3-fast": ["1:1", "3:4", "4:3", "16:9", "9:16"],
+  "grok-4": ["1:1", "3:4", "4:3", "16:9", "9:16"],
+  "grok-4-mini-thinking-tahoe": ["1:1", "3:4", "4:3", "16:9", "9:16"],
 };
 
-const MODELS_WITH_IMAGE_REF = ["imagen-flash"];
+const MODELS_WITH_IMAGE_REF = ["grok-3-auto", "grok-3-fast", "grok-4", "grok-4-mini-thinking-tahoe"];
 
 export default function ImageGenerator() {
   const [mode, setMode] = useState<Mode>("generate");
   const [prompt, setPrompt] = useState("");
-  const [model, setModel] = useState("imagen-flash");
+  const [model, setModel] = useState("grok-3-auto");
   const [style, setStyle] = useState("None");
   const [aspectRatio, setAspectRatio] = useState("16:9");
   const [imageRef, setImageRef] = useState<string | null>(null);
