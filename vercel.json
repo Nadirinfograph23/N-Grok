@@ -5,11 +5,13 @@
   "buildCommand": "cd n-grok-frontend && npm run build",
   "outputDirectory": "n-grok-frontend/dist",
   "functions": {
-    "api/**/*.ts": {
-      "maxDuration": 60
+    "api/**/*.py": {
+      "maxDuration": 60,
+      "runtime": "@vercel/python@4.5.0"
     }
   },
   "rewrites": [
+    { "source": "/api/upload-image", "destination": "/api/upload_image" },
     { "source": "/api/(.*)", "destination": "/api/$1" },
     { "source": "/(.*)", "destination": "/" }
   ]
