@@ -14,15 +14,24 @@ export interface ImageEditRequest {
 
 export interface VideoGenerateRequest {
   prompt: string;
-  model?: string;
-  aspect_ratio?: string;
-  resolution?: string;
+  width?: number;
+  height?: number;
+  video_length?: number;
+  num_inference_steps?: number;
+  guidance_scale?: number;
+  flow_shift?: number;
+  embedded_guidance_scale?: number;
+  seed?: number;
+  image?: string;
 }
 
 export interface VideoSubmitResponse {
-  status: "submitted" | "processing";
-  post_id?: string;
+  status: "starting" | "processing" | "succeeded" | "failed" | "canceled";
+  prediction_id?: string;
+  video_url?: string;
   message?: string;
+  error?: string;
+  logs?: string;
 }
 
 export interface ChatRequest {
@@ -86,9 +95,18 @@ export async function generateVideo(req: VideoGenerateRequest): Promise<VideoSub
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(req),
   });
-  if (!res.ok) {
+  if (!res.ok && res.status !== 202) {
     const err = await res.text();
     throw new Error(`Video generation failed: ${err}`);
+  }
+  return res.json();
+}
+
+export async function checkVideoStatus(predictionId: string): Promise<VideoSubmitResponse> {
+  const res = await fetch(`${API_URL}/api/videos/status/${predictionId}`);
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Status check failed: ${err}`);
   }
   return res.json();
 }

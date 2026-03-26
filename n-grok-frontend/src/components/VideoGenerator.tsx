@@ -1,61 +1,118 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { Loader2 } from "lucide-react";
-import { generateVideo, uploadImage } from "../lib/api";
+import { generateVideo, checkVideoStatus } from "../lib/api";
 
-type GenerationStatus = "idle" | "submitting" | "submitted" | "error";
+type GenerationStatus = "idle" | "submitting" | "processing" | "succeeded" | "error";
 
-const VIDEO_MODELS: Record<string, string> = {
-  "Grok 3 Auto": "grok-3-auto",
-  "Grok 3 Fast": "grok-3-fast",
-  "Grok 4": "grok-4",
-  "Grok 4 Mini": "grok-4-mini-thinking-tahoe",
+const VIDEO_RESOLUTIONS: Record<string, { width: number; height: number }> = {
+  "1280 x 720": { width: 1280, height: 720 },
+  "960 x 544": { width: 960, height: 544 },
+  "720 x 1280": { width: 720, height: 1280 },
+  "544 x 960": { width: 544, height: 960 },
 };
 
-const ASPECT_RATIOS = ["16:9", "9:16"];
-const RESOLUTIONS = ["720p", "1080p"];
+const VIDEO_LENGTHS: Record<string, number> = {
+  "~5s (129 frames)": 129,
+  "~2.5s (65 frames)": 65,
+};
+
+const INFERENCE_STEPS: Record<string, number> = {
+  "30 steps (faster)": 30,
+  "50 steps (default)": 50,
+};
 
 export default function VideoGenerator() {
   const [prompt, setPrompt] = useState("");
-  const [model, setModel] = useState("grok-3-auto");
-  const [aspectRatio, setAspectRatio] = useState("16:9");
-  const [resolution, setResolution] = useState("720p");
-  const [, setImageRef] = useState<string | null>(null);
+  const [resolution, setResolution] = useState("1280 x 720");
+  const [videoLength, setVideoLength] = useState("~5s (129 frames)");
+  const [inferenceSteps, setInferenceSteps] = useState("50 steps (default)");
+  const [imageBase64, setImageBase64] = useState<string | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
-  const [showRatioMenu, setShowRatioMenu] = useState(false);
-  const [showModelMenu, setShowModelMenu] = useState(false);
   const [showResMenu, setShowResMenu] = useState(false);
+  const [showLengthMenu, setShowLengthMenu] = useState(false);
+  const [showStepsMenu, setShowStepsMenu] = useState(false);
 
   const [status, setStatus] = useState<GenerationStatus>("idle");
   const [errorMsg, setErrorMsg] = useState("");
-  const [requestId, setRequestId] = useState<string | null>(null);
-  const [submitMessage, setSubmitMessage] = useState("");
+  const [predictionId, setPredictionId] = useState<string | null>(null);
+  const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [statusMessage, setStatusMessage] = useState("");
 
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const videoInputRef = useRef<HTMLInputElement>(null);
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const stopPolling = useCallback(() => {
+    if (pollingRef.current) {
+      clearInterval(pollingRef.current);
+      pollingRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => stopPolling();
+  }, [stopPolling]);
+
+  const startPolling = useCallback(
+    (id: string) => {
+      stopPolling();
+      pollingRef.current = setInterval(async () => {
+        try {
+          const resp = await checkVideoStatus(id);
+          if (resp.status === "succeeded" && resp.video_url) {
+            stopPolling();
+            setVideoUrl(resp.video_url);
+            setStatus("succeeded");
+            setStatusMessage("Video generated successfully!");
+          } else if (resp.status === "failed" || resp.status === "canceled") {
+            stopPolling();
+            setErrorMsg(resp.error || resp.message || "Video generation failed.");
+            setStatus("error");
+          } else {
+            setStatusMessage(resp.message || "Generating video...");
+          }
+        } catch {
+          stopPolling();
+          setErrorMsg("Failed to check video status. Please try again.");
+          setStatus("error");
+        }
+      }, 5000);
+    },
+    [stopPolling]
+  );
 
   const handleGenerate = async () => {
     if (!prompt.trim()) return;
 
     setStatus("submitting");
     setErrorMsg("");
-    setRequestId(null);
-    setSubmitMessage("");
+    setPredictionId(null);
+    setVideoUrl(null);
+    setStatusMessage("Submitting video request...");
+
+    const res = VIDEO_RESOLUTIONS[resolution];
 
     try {
       const resp = await generateVideo({
         prompt: prompt.trim(),
-        model,
-        aspect_ratio: aspectRatio,
-        resolution,
+        width: res.width,
+        height: res.height,
+        video_length: VIDEO_LENGTHS[videoLength],
+        num_inference_steps: INFERENCE_STEPS[inferenceSteps],
+        image: imageBase64 || undefined,
       });
 
-      if (resp.post_id) {
-        setRequestId(resp.post_id);
-        setSubmitMessage(resp.message || "Video generation request submitted successfully.");
-        setStatus("submitted");
+      if (resp.status === "succeeded" && resp.video_url) {
+        setVideoUrl(resp.video_url);
+        setStatus("succeeded");
+        setStatusMessage("Video generated successfully!");
+      } else if (resp.prediction_id) {
+        setPredictionId(resp.prediction_id);
+        setStatus("processing");
+        setStatusMessage("Video is being generated. This may take a few minutes...");
+        startPolling(resp.prediction_id);
       } else {
-        setSubmitMessage("Video generation request submitted successfully.");
-        setStatus("submitted");
+        setErrorMsg("Unexpected response from server.");
+        setStatus("error");
       }
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : "Generation failed");
@@ -63,28 +120,37 @@ export default function VideoGenerator() {
     }
   };
 
-  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     const preview = URL.createObjectURL(file);
     setImagePreview(preview);
 
-    try {
-      const result = await uploadImage(file);
-      setImageRef(result.data_uri);
-    } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : "Upload failed");
-    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      setImageBase64(dataUrl);
+    };
+    reader.readAsDataURL(file);
   };
 
   const removeImage = () => {
-    setImageRef(null);
+    setImageBase64(null);
     setImagePreview(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
-  const isGenerating = status === "submitting";
+  const resetState = () => {
+    stopPolling();
+    setStatus("idle");
+    setPredictionId(null);
+    setVideoUrl(null);
+    setStatusMessage("");
+    setErrorMsg("");
+  };
+
+  const isGenerating = status === "submitting" || status === "processing";
 
   return (
     <div style={{ height: "calc(100vh - 56px)" }} className="relative">
@@ -110,39 +176,53 @@ export default function VideoGenerator() {
             VIDEO STUDIO
           </h1>
           <p className="text-secondary text-sm font-medium tracking-wide opacity-60">
-            Animate images into stunning AI videos with motion effects
+            Generate stunning AI videos from text &amp; images with HunyuanVideo
           </p>
         </div>
 
         {/* Result Section */}
-        {status === "submitting" && (
+        {(status === "submitting" || status === "processing") && (
           <div className="w-full max-w-2xl mb-8 animate-fade-in-up">
             <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-8 flex flex-col items-center">
               <Loader2 className="w-10 h-10 text-primary animate-spin mb-4" />
-              <p className="text-white text-sm mb-1">Submitting video request...</p>
+              <p className="text-white text-sm mb-1">{statusMessage}</p>
+              {status === "processing" && (
+                <p className="text-muted text-xs mt-2">This may take 3-5 minutes depending on the settings</p>
+              )}
+              {predictionId && (
+                <p className="text-muted text-xs font-mono bg-white/5 px-3 py-1.5 rounded-lg mt-3">ID: {predictionId}</p>
+              )}
             </div>
           </div>
         )}
 
-        {status === "submitted" && (
+        {status === "succeeded" && videoUrl && (
           <div className="w-full max-w-2xl mb-8 animate-fade-in-up">
-            <div className="bg-primary/10 backdrop-blur-xl border border-primary/20 rounded-2xl p-8 flex flex-col items-center">
-              <div className="w-12 h-12 bg-primary/20 rounded-full flex items-center justify-center mb-4">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-primary">
-                  <polyline points="20 6 9 17 4 12" />
-                </svg>
+            <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-4 flex flex-col items-center">
+              <video
+                src={videoUrl}
+                controls
+                autoPlay
+                loop
+                className="w-full rounded-xl mb-4"
+              />
+              <div className="flex items-center gap-3">
+                <a
+                  href={videoUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  download
+                  className="text-xs font-bold text-black bg-primary px-5 py-2.5 rounded-xl hover:shadow-glow transition-all"
+                >
+                  Download Video
+                </a>
+                <button
+                  onClick={resetState}
+                  className="text-xs font-bold text-white bg-white/10 px-5 py-2.5 rounded-xl hover:bg-white/20 transition-all border border-white/10"
+                >
+                  Generate Another
+                </button>
               </div>
-              <p className="text-white text-sm font-bold mb-2">Request Submitted!</p>
-              <p className="text-muted text-xs text-center mb-3">{submitMessage}</p>
-              {requestId && (
-                <p className="text-muted text-xs font-mono bg-white/5 px-3 py-1.5 rounded-lg">ID: {requestId}</p>
-              )}
-              <button
-                onClick={() => { setStatus("idle"); setRequestId(null); setSubmitMessage(""); }}
-                className="mt-4 text-xs font-bold text-black bg-primary px-4 py-2 rounded-xl hover:shadow-glow transition-all"
-              >
-                Generate Another
-              </button>
             </div>
           </div>
         )}
@@ -152,7 +232,7 @@ export default function VideoGenerator() {
             <div className="bg-red-500/10 border border-red-500/20 rounded-2xl p-6 text-center">
               <p className="text-red-400 text-sm mb-3">{errorMsg}</p>
               <button
-                onClick={() => setStatus("idle")}
+                onClick={resetState}
                 className="text-xs font-bold text-black bg-primary px-4 py-2 rounded-xl"
               >
                 Try Again
@@ -166,7 +246,7 @@ export default function VideoGenerator() {
           <div className="w-full bg-[#111]/90 backdrop-blur-xl border border-white/10 rounded-[1.5rem] md:rounded-[2.5rem] p-3 md:p-5 flex flex-col gap-3 md:gap-5 shadow-3xl">
             {/* Upload + Prompt */}
             <div className="flex items-start gap-5 px-2">
-              {/* Image upload */}
+              {/* Image upload for image-to-video */}
               <div className="relative">
                 <input ref={fileInputRef} type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
                 {imagePreview ? (
@@ -177,7 +257,7 @@ export default function VideoGenerator() {
                 ) : (
                   <button
                     type="button"
-                    title="Reference image"
+                    title="Upload image (image-to-video)"
                     onClick={() => fileInputRef.current?.click()}
                     className="w-10 h-10 shrink-0 rounded-xl border transition-all flex items-center justify-center relative overflow-hidden mt-1.5 bg-white/5 hover:bg-white/10 group border-white/10 hover:border-primary/40"
                   >
@@ -189,24 +269,10 @@ export default function VideoGenerator() {
                   </button>
                 )}
               </div>
-              {/* Video clip icon */}
-              <div className="relative">
-                <input ref={videoInputRef} type="file" accept="video/*" className="hidden" />
-                <button
-                  type="button"
-                  title="Reference video"
-                  className="w-10 h-10 shrink-0 rounded-xl border transition-all flex items-center justify-center mt-1.5 bg-white/5 hover:bg-white/10 group border-white/10 hover:border-primary/40"
-                >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-muted group-hover:text-primary transition-colors">
-                    <polygon points="23 7 16 12 23 17 23 7" />
-                    <rect x="1" y="5" width="15" height="14" rx="2" ry="2" />
-                  </svg>
-                </button>
-              </div>
               <textarea
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
-                placeholder="Describe the video you want to create"
+                placeholder={imageBase64 ? "Describe how to animate this image..." : "Describe the video you want to create"}
                 rows={1}
                 className="flex-1 bg-transparent border-none text-white text-base md:text-xl placeholder:text-muted focus:outline-none resize-none pt-2.5 leading-relaxed min-h-[40px] max-h-[150px] md:max-h-[250px] overflow-y-auto custom-scrollbar"
               />
@@ -215,65 +281,11 @@ export default function VideoGenerator() {
             {/* Bottom Bar */}
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4 px-2 pt-4 border-t border-white/5 relative">
               <div className="flex items-center gap-1.5 md:gap-2.5 relative flex-wrap pb-1 md:pb-0">
-                {/* Model Selector */}
+                {/* Resolution Selector */}
                 <div className="relative">
                   <button
                     type="button"
-                    onClick={() => { setShowModelMenu(!showModelMenu); setShowRatioMenu(false); setShowResMenu(false); }}
-                    className="flex items-center gap-1.5 md:gap-2.5 px-3 md:px-4 py-2 md:py-2.5 bg-white/5 hover:bg-white/10 rounded-xl md:rounded-2xl transition-all border border-white/5 group whitespace-nowrap"
-                  >
-                    <div className="w-5 h-5 bg-primary rounded-md flex items-center justify-center shadow-lg shadow-primary/20">
-                      <span className="text-[10px] font-black text-black">G</span>
-                    </div>
-                    <span className="text-xs font-bold text-white group-hover:text-primary transition-colors">
-                      {Object.entries(VIDEO_MODELS).find(([, v]) => v === model)?.[0] || model}
-                    </span>
-                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4" className="opacity-20 group-hover:opacity-100 transition-opacity">
-                      <path d="M6 9l6 6 6-6" />
-                    </svg>
-                  </button>
-                  {showModelMenu && (
-                    <div className="absolute bottom-full left-0 mb-2 bg-[#1a1a1a] border border-white/10 rounded-xl py-1 shadow-xl z-50">
-                      {Object.entries(VIDEO_MODELS).map(([label, value]) => (
-                        <button key={value} onClick={() => { setModel(value); setShowModelMenu(false); }}
-                          className={`block w-full text-left px-4 py-2 text-xs font-bold transition-colors ${model === value ? "text-primary bg-white/5" : "text-white hover:bg-white/5"}`}
-                        >{label}</button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                {/* Aspect Ratio */}
-                <div className="relative">
-                  <button
-                    type="button"
-                    onClick={() => { setShowRatioMenu(!showRatioMenu); setShowModelMenu(false); setShowResMenu(false); }}
-                    className="flex items-center gap-1.5 md:gap-2.5 px-3 md:px-4 py-2 md:py-2.5 bg-white/5 hover:bg-white/10 rounded-xl md:rounded-2xl transition-all border border-white/5 group whitespace-nowrap"
-                  >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="opacity-60 text-secondary">
-                      <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-                    </svg>
-                    <span className="text-xs font-bold text-white group-hover:text-primary transition-colors">{aspectRatio}</span>
-                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4" className="opacity-20 group-hover:opacity-100 transition-opacity">
-                      <path d="M6 9l6 6 6-6" />
-                    </svg>
-                  </button>
-                  {showRatioMenu && (
-                    <div className="absolute bottom-full left-0 mb-2 bg-[#1a1a1a] border border-white/10 rounded-xl py-1 shadow-xl z-50">
-                      {ASPECT_RATIOS.map((r) => (
-                        <button key={r} onClick={() => { setAspectRatio(r); setShowRatioMenu(false); }}
-                          className={`block w-full text-left px-4 py-2 text-xs font-bold transition-colors ${aspectRatio === r ? "text-primary bg-white/5" : "text-white hover:bg-white/5"}`}
-                        >{r}</button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                {/* Resolution */}
-                <div className="relative">
-                  <button
-                    type="button"
-                    onClick={() => { setShowResMenu(!showResMenu); setShowRatioMenu(false); setShowModelMenu(false); }}
+                    onClick={() => { setShowResMenu(!showResMenu); setShowLengthMenu(false); setShowStepsMenu(false); }}
                     className="flex items-center gap-1.5 md:gap-2.5 px-3 md:px-4 py-2 md:py-2.5 bg-white/5 hover:bg-white/10 rounded-xl md:rounded-2xl transition-all border border-white/5 group whitespace-nowrap"
                   >
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="opacity-60 text-secondary">
@@ -288,10 +300,71 @@ export default function VideoGenerator() {
                   </button>
                   {showResMenu && (
                     <div className="absolute bottom-full left-0 mb-2 bg-[#1a1a1a] border border-white/10 rounded-xl py-1 shadow-xl z-50">
-                      {RESOLUTIONS.map((r) => (
+                      {Object.keys(VIDEO_RESOLUTIONS).map((r) => (
                         <button key={r} onClick={() => { setResolution(r); setShowResMenu(false); }}
                           className={`block w-full text-left px-4 py-2 text-xs font-bold transition-colors ${resolution === r ? "text-primary bg-white/5" : "text-white hover:bg-white/5"}`}
                         >{r}</button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Video Length */}
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => { setShowLengthMenu(!showLengthMenu); setShowResMenu(false); setShowStepsMenu(false); }}
+                    className="flex items-center gap-1.5 md:gap-2.5 px-3 md:px-4 py-2 md:py-2.5 bg-white/5 hover:bg-white/10 rounded-xl md:rounded-2xl transition-all border border-white/5 group whitespace-nowrap"
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="opacity-60 text-secondary">
+                      <circle cx="12" cy="12" r="10" />
+                      <polyline points="12 6 12 12 16 14" />
+                    </svg>
+                    <span className="text-xs font-bold text-white group-hover:text-primary transition-colors">{videoLength}</span>
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4" className="opacity-20 group-hover:opacity-100 transition-opacity">
+                      <path d="M6 9l6 6 6-6" />
+                    </svg>
+                  </button>
+                  {showLengthMenu && (
+                    <div className="absolute bottom-full left-0 mb-2 bg-[#1a1a1a] border border-white/10 rounded-xl py-1 shadow-xl z-50">
+                      {Object.keys(VIDEO_LENGTHS).map((l) => (
+                        <button key={l} onClick={() => { setVideoLength(l); setShowLengthMenu(false); }}
+                          className={`block w-full text-left px-4 py-2 text-xs font-bold transition-colors ${videoLength === l ? "text-primary bg-white/5" : "text-white hover:bg-white/5"}`}
+                        >{l}</button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Inference Steps */}
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => { setShowStepsMenu(!showStepsMenu); setShowResMenu(false); setShowLengthMenu(false); }}
+                    className="flex items-center gap-1.5 md:gap-2.5 px-3 md:px-4 py-2 md:py-2.5 bg-white/5 hover:bg-white/10 rounded-xl md:rounded-2xl transition-all border border-white/5 group whitespace-nowrap"
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="opacity-60 text-secondary">
+                      <line x1="4" y1="21" x2="4" y2="14" />
+                      <line x1="4" y1="10" x2="4" y2="3" />
+                      <line x1="12" y1="21" x2="12" y2="12" />
+                      <line x1="12" y1="8" x2="12" y2="3" />
+                      <line x1="20" y1="21" x2="20" y2="16" />
+                      <line x1="20" y1="12" x2="20" y2="3" />
+                      <line x1="1" y1="14" x2="7" y2="14" />
+                      <line x1="9" y1="8" x2="15" y2="8" />
+                      <line x1="17" y1="16" x2="23" y2="16" />
+                    </svg>
+                    <span className="text-xs font-bold text-white group-hover:text-primary transition-colors">{inferenceSteps}</span>
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4" className="opacity-20 group-hover:opacity-100 transition-opacity">
+                      <path d="M6 9l6 6 6-6" />
+                    </svg>
+                  </button>
+                  {showStepsMenu && (
+                    <div className="absolute bottom-full left-0 mb-2 bg-[#1a1a1a] border border-white/10 rounded-xl py-1 shadow-xl z-50">
+                      {Object.keys(INFERENCE_STEPS).map((s) => (
+                        <button key={s} onClick={() => { setInferenceSteps(s); setShowStepsMenu(false); }}
+                          className={`block w-full text-left px-4 py-2 text-xs font-bold transition-colors ${inferenceSteps === s ? "text-primary bg-white/5" : "text-white hover:bg-white/5"}`}
+                        >{s}</button>
                       ))}
                     </div>
                   )}
@@ -308,7 +381,7 @@ export default function VideoGenerator() {
                 {isGenerating ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin" />
-                    Submitting...
+                    Generating...
                   </>
                 ) : (
                   "Generate +"
