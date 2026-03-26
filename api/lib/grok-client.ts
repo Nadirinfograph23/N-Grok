@@ -161,20 +161,25 @@ async function bootstrapSession(): Promise<SessionContext> {
   const keys = generateKeys();
 
   // Step 2: First c_request (multipart with public key)
+  // IMPORTANT: Part "1" (binary blob) must come before part "0" (JSON) to match
+  // the order used by curl_cffi CurlMime in the reference Python implementation.
   const boundary = `----formdata-${randomHex(8)}`;
   const publicKeyBytes = new Uint8Array(keys.userPublicKey);
 
-  let multipartBody = "";
-  multipartBody += `--${boundary}\r\n`;
-  multipartBody += `Content-Disposition: form-data; name="0"\r\n\r\n`;
-  multipartBody += `[{"userPublicKey":"$o1"}]\r\n`;
-  multipartBody += `--${boundary}\r\n`;
-  multipartBody += `Content-Disposition: form-data; name="1"; filename="blob"\r\n`;
-  multipartBody += `Content-Type: application/octet-stream\r\n\r\n`;
+  let multipartPreamble = "";
+  multipartPreamble += `--${boundary}\r\n`;
+  multipartPreamble += `Content-Disposition: form-data; name="1"; filename="blob"\r\n`;
+  multipartPreamble += `Content-Type: application/octet-stream\r\n\r\n`;
+
+  const multipartPostamble =
+    `\r\n--${boundary}\r\n` +
+    `Content-Disposition: form-data; name="0"\r\n\r\n` +
+    `[{"userPublicKey":"$o1"}]\r\n` +
+    `--${boundary}--\r\n`;
 
   const textEncoder = new TextEncoder();
-  const preamble = textEncoder.encode(multipartBody);
-  const postamble = textEncoder.encode(`\r\n--${boundary}--\r\n`);
+  const preamble = textEncoder.encode(multipartPreamble);
+  const postamble = textEncoder.encode(multipartPostamble);
 
   const body1 = new Uint8Array(
     preamble.length + publicKeyBytes.length + postamble.length
@@ -206,6 +211,11 @@ async function bootstrapSession(): Promise<SessionContext> {
     ((cResp1.headers as any).getSetCookie?.() as string[]) || [];
   cookies = parseCookies(setCookies1, cookies);
 
+  if (!cResp1Text.includes('"anonUserId"')) {
+    throw new Error(
+      `First c_request failed (status ${cResp1.status}): ${cResp1Text.substring(0, 200)}`
+    );
+  }
   const anonUser = between(cResp1Text, '{"anonUserId":"', '"');
 
   // Step 3: Second c_request
@@ -490,7 +500,7 @@ export async function askGrok(options: AskGrokOptions): Promise<GrokResponse> {
     ? `https://grok.com/rest/app-chat/conversations/${conversationId}/responses`
     : "https://grok.com/rest/app-chat/conversations/new";
 
-  // Build payload (aligned with Grok3API ask() payload)
+  // Build payload (aligned with reference Python Grok implementation)
   const payload: Record<string, unknown> = {
     temporary,
     modelName,
@@ -507,18 +517,16 @@ export async function askGrok(options: AskGrokOptions): Promise<GrokResponse> {
     toolOverrides,
     enableSideBySide,
     sendFinalMetadata,
-    isPreset,
     isReasoning,
     disableTextFollowUps,
-    customInstructions,
-    "deepsearch preset": deepsearchPreset,
     webpageUrls,
-    disableArtifact,
     responseMetadata: {
       requestModelDetails: {
         modelId: responseModelId || modelName,
       },
     },
+    disableMemory: false,
+    forceSideBySide: false,
     modelMode,
     isAsyncChat: false,
   };
