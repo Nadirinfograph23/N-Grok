@@ -101,7 +101,10 @@ export default function VideoGenerator() {
         image: imageBase64 || undefined,
       });
 
-      if (resp.status === "succeeded" && resp.video_url) {
+      if (resp.status === "failed") {
+        setErrorMsg(resp.error || resp.message || "Video generation failed.");
+        setStatus("error");
+      } else if (resp.status === "succeeded" && resp.video_url) {
         setVideoUrl(resp.video_url);
         setStatus("succeeded");
         setStatusMessage("Video generated successfully!");

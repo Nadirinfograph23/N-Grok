@@ -96,8 +96,14 @@ export async function generateVideo(req: VideoGenerateRequest): Promise<VideoSub
     body: JSON.stringify(req),
   });
   if (!res.ok && res.status !== 202) {
-    const err = await res.text();
-    throw new Error(`Video generation failed: ${err}`);
+    let errorMessage = "Video generation failed";
+    try {
+      const data = await res.json();
+      errorMessage = data.error || data.message || errorMessage;
+    } catch {
+      errorMessage = await res.text();
+    }
+    throw new Error(errorMessage);
   }
   return res.json();
 }
