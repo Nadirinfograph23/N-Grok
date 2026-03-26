@@ -69,7 +69,6 @@ export default async function handler(
       headers: {
         Authorization: `Bearer ${apiToken}`,
         "Content-Type": "application/json",
-        Prefer: "wait",
       },
       body: JSON.stringify({
         version: HUNYUAN_MODEL_VERSION,
