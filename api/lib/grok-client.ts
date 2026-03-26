@@ -17,6 +17,19 @@ interface CookieJar {
   [key: string]: string;
 }
 
+function extractSetCookieHeaders(headers: Headers): string[] {
+  // getSetCookie() is the standard API but may not be available on all runtimes
+  if (typeof (headers as any).getSetCookie === "function") {
+    return (headers as any).getSetCookie() || [];
+  }
+  // Fallback: use raw get which joins multiple Set-Cookie values with ", "
+  const raw = headers.get("set-cookie");
+  if (!raw) return [];
+  // Split on ", " that is followed by a cookie name (word=), to avoid
+  // splitting inside Expires or other date values.
+  return raw.split(/,\s*(?=[A-Za-z0-9_-]+=)/);
+}
+
 function parseCookies(
   setCookieHeaders: string[],
   existing: CookieJar
@@ -135,8 +148,7 @@ async function bootstrapSession(): Promise<SessionContext> {
   });
 
   const loadHtml = await loadResp.text();
-  const setCookies =
-    ((loadResp.headers as any).getSetCookie?.() as string[]) || [];
+  const setCookies = extractSetCookieHeaders(loadResp.headers);
   cookies = parseCookies(setCookies, cookies);
 
   // Extract scripts (support both relative and CDN-absolute URLs)
@@ -207,8 +219,7 @@ async function bootstrapSession(): Promise<SessionContext> {
   });
 
   const cResp1Text = await cResp1.text();
-  const setCookies1 =
-    ((cResp1.headers as any).getSetCookie?.() as string[]) || [];
+  const setCookies1 = extractSetCookieHeaders(cResp1.headers);
   cookies = parseCookies(setCookies1, cookies);
 
   if (!cResp1Text.includes('"anonUserId"')) {
@@ -236,8 +247,7 @@ async function bootstrapSession(): Promise<SessionContext> {
   });
 
   const cResp2Bytes = new Uint8Array(await cResp2.arrayBuffer());
-  const setCookies2 =
-    ((cResp2.headers as any).getSetCookie?.() as string[]) || [];
+  const setCookies2 = extractSetCookieHeaders(cResp2.headers);
   cookies = parseCookies(setCookies2, cookies);
 
   // Extract challenge from hex response
@@ -279,8 +289,7 @@ async function bootstrapSession(): Promise<SessionContext> {
   });
 
   const cResp3Text = await cResp3.text();
-  const setCookies3 =
-    ((cResp3.headers as any).getSetCookie?.() as string[]) || [];
+  const setCookies3 = extractSetCookieHeaders(cResp3.headers);
   cookies = parseCookies(setCookies3, cookies);
 
   // Parse verification token and SVG data

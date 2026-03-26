@@ -64,15 +64,27 @@ export async function parseGrokAsync(
   let scriptContent1 = "";
   let scriptContent2 = "";
 
-  for (const script of scripts) {
-    const scriptUrl = script.startsWith("http") ? script : `https://grok.com${script}`;
-    const content = await fetchText(scriptUrl);
-    if (content.includes("anonPrivateKey")) {
-      scriptContent1 = content;
-    } else if (content.includes("880932)")) {
-      scriptContent2 = content;
-    }
+  // Fetch scripts in parallel batches for speed (avoids Vercel timeout)
+  const BATCH_SIZE = 10;
+  for (let i = 0; i < scripts.length; i += BATCH_SIZE) {
     if (scriptContent1 && scriptContent2) break;
+    const batch = scripts.slice(i, i + BATCH_SIZE);
+    const results = await Promise.all(
+      batch.map(async (script) => {
+        const scriptUrl = script.startsWith("http")
+          ? script
+          : `https://grok.com${script}`;
+        return fetchText(scriptUrl);
+      })
+    );
+    for (const content of results) {
+      if (!scriptContent1 && content.includes("anonPrivateKey")) {
+        scriptContent1 = content;
+      } else if (!scriptContent2 && content.includes("880932)")) {
+        scriptContent2 = content;
+      }
+      if (scriptContent1 && scriptContent2) break;
+    }
   }
 
   if (!scriptContent1 || !scriptContent2) {
